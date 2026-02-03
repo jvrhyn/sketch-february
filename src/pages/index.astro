@@ -1,7 +1,7 @@
 ---
 // List of all sketches - update this as you add new days
 const sketches = [
-  { day: 1, title: "Day 1", description: "" },
+  { day: 1, title: "icosahedron", description: "click and drag to rotate" },
   // { day: 2, title: "TBD", description: "Coming soon" },
   // ... add more days as you create them
 ];
@@ -48,9 +48,9 @@ const allDays = Array.from({ length: 28 }, (_, i) => i + 1);
 
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        grid-template-columns: repeat(7, 1fr);
         gap: 1rem;
-        max-width: 900px;
+        max-width: 700px;
         margin: 0 auto;
       }
 
