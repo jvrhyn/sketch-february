@@ -1,0 +1,31 @@
+---
+// TEMPLATE: Copy this file to src/pages/day/[N].astro for a new sketch
+// Replace [N] with the day number (e.g., 2.astro, 3.astro, etc.)
+// Don't forget to add it to the sketches array in src/pages/index.astro!
+
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="Your Title Here"
+  day={0}
+  description="A brief description of your sketch"
+>
+  <script is:inline>
+    // Your p5.js sketch code goes here
+    // The canvas will be placed inside #sketch-container
+
+    function setup() {
+      const canvas = createCanvas(600, 600);
+      canvas.parent('sketch-container');
+      // Setup code here
+    }
+
+    function draw() {
+      background(10, 10, 15);
+      // Draw code here
+    }
+
+    // Add any additional functions, classes, etc. below
+  </script>
+</SketchLayout>

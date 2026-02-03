@@ -1,0 +1,20 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="Day 1"
+  day={1}
+  description=""
+>
+  <script is:inline>
+    function setup() {
+      const canvas = createCanvas(600, 600);
+      canvas.parent('sketch-container');
+    }
+
+    function draw() {
+      background(10, 10, 15);
+    }
+  </script>
+</SketchLayout>
