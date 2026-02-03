@@ -1,0 +1,139 @@
+---
+// List of all sketches - update this as you add new days
+const sketches = [
+  { day: 1, title: "Day 1", description: "" },
+  // { day: 2, title: "TBD", description: "Coming soon" },
+  // ... add more days as you create them
+];
+
+const allDays = Array.from({ length: 28 }, (_, i) => i + 1);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>sketch february</title>
+    <meta name="description" content="28 days of generative art experiments with p5.js" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: Helvetica, Arial, sans-serif;
+        background: #0a0a0a;
+        color: #fff;
+        min-height: 100vh;
+        padding: 2rem;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 3rem;
+      }
+
+      h1 {
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+      }
+
+      .subtitle {
+        opacity: 0.6;
+        font-size: 1.1rem;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 1rem;
+        max-width: 900px;
+        margin: 0 auto;
+      }
+
+      .day-card {
+        aspect-ratio: 1;
+        border: 1px solid #222;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-decoration: none;
+        color: #fff;
+        transition: all 0.2s;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .day-card.available {
+        background: #111;
+        border-color: #333;
+      }
+
+      .day-card.available:hover {
+        border-color: #fff;
+        transform: translateY(-2px);
+      }
+
+      .day-card.upcoming {
+        background: #111;
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      .day-number {
+        font-size: 2rem;
+        font-weight: bold;
+      }
+
+      .day-title {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        margin-top: 0.25rem;
+        text-align: center;
+        padding: 0 0.5rem;
+      }
+
+      footer {
+        text-align: center;
+        margin-top: 4rem;
+        opacity: 0.5;
+        font-size: 0.85rem;
+      }
+
+      footer a {
+        color: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>sketch february</h1>
+      <p class="subtitle">28 days of generative art experiments</p>
+    </header>
+
+    <div class="grid">
+      {allDays.map((day) => {
+        const sketch = sketches.find(s => s.day === day);
+        return sketch ? (
+          <a href={`/day/${day}`} class="day-card available">
+            <span class="day-number">{day}</span>
+            <span class="day-title">{sketch.title}</span>
+          </a>
+        ) : (
+          <div class="day-card upcoming">
+            <span class="day-number">{day}</span>
+          </div>
+        );
+      })}
+    </div>
+
+    <footer>
+      <p>Built with <a href="https://p5js.org" target="_blank">p5.js</a> + <a href="https://astro.build" target="_blank">Astro</a></p>
+    </footer>
+  </body>
+</html>
