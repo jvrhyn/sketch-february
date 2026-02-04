@@ -18,8 +18,8 @@ import SketchLayout from '../../layouts/SketchLayout.astro';
     let isDragging = false;
     let lastMouseX, lastMouseY;
     const friction = 0.95;
-    const circleRadius = 40;
-    const edgeWidth = 12;
+    const circleRadius = 30;
+    const edgeWidth = 1;
 
     function setup() {
       const canvas = createCanvas(600, 600);
@@ -121,14 +121,15 @@ import SketchLayout from '../../layouts/SketchLayout.astro';
         let v2 = transformed[b];
 
         // Extend line past vertices so edges meet
-        let dx = v2.x - v1.x;
+        /*let dx = v2.x - v1.x;
         let dy = v2.y - v1.y;
         let len = sqrt(dx * dx + dy * dy);
         let extend = circleRadius * 0.07;
         let ex = (dx / len) * extend;
-        let ey = (dy / len) * extend;
+        let ey = (dy / len) * extend;*/
 
-        line(v1.x - ex, v1.y - ey, v2.x + ex, v2.y + ey);
+        //line(v1.x - ex, v1.y - ey, v2.x + ex, v2.y + ey);
+        line(v1.x, v1.y, v2.x, v2.y);
       }
     }
 
