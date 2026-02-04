@@ -1,0 +1,208 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="passing spheres"
+  day={3}
+  description="toggle the slider and buttons"
+>
+  <script is:inline>
+    const gridSize = 15; // Smaller grid = smoother curves
+    const gridPadding = 60;
+    const spheres = [];
+    let sphereRadius = 100;
+    const sphereSpeed = 1.5;
+    const lerpSpeed = 0.04;
+    let rotationAngle = 0;
+
+    let cols, rows;
+    let gridPoints = [];
+    let currentPositions = [];
+    let sizeSlider;
+    let rotationDirection = 0; // -1, 0, or 1
+    const rotationSpeed = 0.02;
+
+    function setup() {
+      const canvas = createCanvas(600, 600);
+      canvas.parent('sketch-container');
+
+      // Create controls container
+      const controls = createDiv();
+      controls.parent('sketch-container');
+      controls.style('display', 'flex');
+      controls.style('align-items', 'center');
+      controls.style('justify-content', 'center');
+      controls.style('gap', '20px');
+      controls.style('padding', '15px');
+      controls.style('background', '#111');
+
+      // Size slider
+      const sizeLabel = createSpan('size');
+      sizeLabel.parent(controls);
+      sizeLabel.style('color', '#888');
+      sizeLabel.style('font-size', '14px');
+
+      sizeSlider = createSlider(40, 180, 100);
+      sizeSlider.parent(controls);
+      sizeSlider.style('width', '120px');
+
+      // Rotation buttons
+      const rotLabel = createSpan('rotation');
+      rotLabel.parent(controls);
+      rotLabel.style('color', '#888');
+      rotLabel.style('font-size', '14px');
+      rotLabel.style('margin-left', '20px');
+
+      const ccwBtn = createButton('↺');
+      ccwBtn.parent(controls);
+      ccwBtn.style('font-size', '18px');
+      ccwBtn.style('padding', '5px 12px');
+      ccwBtn.style('cursor', 'pointer');
+      ccwBtn.style('background', '#222');
+      ccwBtn.style('color', '#fff');
+      ccwBtn.style('border', '1px solid #444');
+      ccwBtn.style('border-radius', '4px');
+      ccwBtn.mousePressed(() => rotationDirection = -1);
+      ccwBtn.mouseReleased(() => rotationDirection = 0);
+      ccwBtn.elt.addEventListener('mouseleave', () => rotationDirection = 0);
+
+      const cwBtn = createButton('↻');
+      cwBtn.parent(controls);
+      cwBtn.style('font-size', '18px');
+      cwBtn.style('padding', '5px 12px');
+      cwBtn.style('cursor', 'pointer');
+      cwBtn.style('background', '#222');
+      cwBtn.style('color', '#fff');
+      cwBtn.style('border', '1px solid #444');
+      cwBtn.style('border-radius', '4px');
+      cwBtn.mousePressed(() => rotationDirection = 1);
+      cwBtn.mouseReleased(() => rotationDirection = 0);
+      cwBtn.elt.addEventListener('mouseleave', () => rotationDirection = 0);
+
+      // Grid dimensions
+      const gridWidth = width - gridPadding * 2;
+      const gridHeight = height - gridPadding * 2;
+      cols = floor(gridWidth / gridSize);
+      rows = floor(gridHeight / gridSize);
+
+      // Initialize grid points
+      for (let row = 0; row <= rows; row++) {
+        gridPoints[row] = [];
+        currentPositions[row] = [];
+        for (let col = 0; col <= cols; col++) {
+          const x = gridPadding + col * gridSize;
+          const y = gridPadding + row * gridSize;
+          gridPoints[row][col] = { baseX: x, baseY: y };
+          currentPositions[row][col] = { x: x, y: y };
+        }
+      }
+
+      // Three rows of spheres
+      const offsets = [
+        { x: 0, y: -120 },
+        { x: 0, y: 0 },
+        { x: 0, y: 120 }
+      ];
+      const baseDirections = [1, -1, 1];
+
+      for (let i = 0; i < 3; i++) {
+        spheres.push({
+          offset: offsets[i],
+          baseDir: baseDirections[i],
+          t: random(-1, 1) * 300
+        });
+      }
+    }
+
+    function draw() {
+      background(255);
+
+      // Update rotation based on button hold
+      rotationAngle += rotationDirection * rotationSpeed;
+
+      sphereRadius = sizeSlider.value();
+
+      const cx = width / 2;
+      const cy = height / 2;
+      const wrapDist = 400;
+
+      // Update sphere positions (always move left-right in screen space)
+      for (let sphere of spheres) {
+        sphere.t += sphereSpeed * sphere.baseDir;
+        if (sphere.t > wrapDist) sphere.t = -wrapDist;
+        if (sphere.t < -wrapDist) sphere.t = wrapDist;
+
+        sphere.x = cx + sphere.t;
+        sphere.y = cy + sphere.offset.y;
+      }
+
+      // Calculate target positions for grid points
+      const cosA = cos(rotationAngle);
+      const sinA = sin(rotationAngle);
+
+      for (let row = 0; row <= rows; row++) {
+        for (let col = 0; col <= cols; col++) {
+          const pt = gridPoints[row][col];
+
+          // Transform grid point to world space (apply rotation)
+          const localX = pt.baseX - cx;
+          const localY = pt.baseY - cy;
+          const worldX = cx + localX * cosA - localY * sinA;
+          const worldY = cy + localX * sinA + localY * cosA;
+
+          let dispX = 0;
+          let dispY = 0;
+
+          // Calculate displacement from each sphere
+          for (let sphere of spheres) {
+            const dx = worldX - sphere.x;
+            const dy = worldY - sphere.y;
+            const d = sqrt(dx * dx + dy * dy);
+            const influenceRadius = sphereRadius * 1.8;
+
+            if (d < influenceRadius && d > 0) {
+              const normalizedDist = d / influenceRadius;
+              const bulgeStrength = pow(1 - normalizedDist, 2);
+              const pushAmount = bulgeStrength * sphereRadius * 0.3;
+
+              dispX += (dx / d) * pushAmount;
+              dispY += (dy / d) * pushAmount;
+            }
+          }
+
+          // Rotate displacement back to grid space
+          const targetX = pt.baseX + dispX * cos(-rotationAngle) - dispY * sin(-rotationAngle);
+          const targetY = pt.baseY + dispX * sin(-rotationAngle) + dispY * cos(-rotationAngle);
+
+          // Lerp current position toward target
+          currentPositions[row][col].x = lerp(currentPositions[row][col].x, targetX, lerpSpeed);
+          currentPositions[row][col].y = lerp(currentPositions[row][col].y, targetY, lerpSpeed);
+        }
+      }
+
+      // Draw rotated grid
+      push();
+      translate(cx, cy);
+      rotate(rotationAngle);
+      translate(-cx, -cy);
+
+      noStroke();
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const isBlack = (floor(row / 2) + floor(col / 2)) % 2 === 0;
+          fill(isBlack ? 0 : 255);
+
+          const p1 = currentPositions[row][col];
+          const p2 = currentPositions[row][col + 1];
+          const p3 = currentPositions[row + 1][col + 1];
+          const p4 = currentPositions[row + 1][col];
+
+          quad(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, p4.x, p4.y);
+        }
+      }
+
+      pop();
+    }
+  </script>
+</SketchLayout>
