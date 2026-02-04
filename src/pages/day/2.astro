@@ -1,0 +1,142 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="squaring circles"
+  day={2}
+  description="move mouse to reveal hidden squares"
+>
+  <script is:inline>
+    const gridSize = 50;
+    const circleRadius = 20;
+    let wedgeAngle;
+    let cols, rows;
+    let circles = [];
+    let mousePos;
+
+    function setup() {
+      const canvas = createCanvas(600, 600);
+      canvas.parent('sketch-container');
+
+      wedgeAngle = HALF_PI; // 90 degrees
+
+      cols = floor(width / gridSize) + 1;
+      rows = floor(height / gridSize) + 1;
+
+      // Initialize circles with random rotation
+      for (let row = 0; row < rows; row++) {
+        circles[row] = [];
+        for (let col = 0; col < cols; col++) {
+          circles[row][col] = {
+            x: col * gridSize + gridSize / 2,
+            y: row * gridSize + gridSize / 2,
+            rotation: random(TWO_PI),
+            baseSpeed: random(0.002, 0.016) * (random() > 0.5 ? 1 : -1),
+            targetRotation: null
+          };
+        }
+      }
+
+      mousePos = createVector(width / 2, height / 2);
+    }
+
+    function getTargetRotation(row, col) {
+      const gridX = col * gridSize + gridSize / 2;
+      const gridY = row * gridSize + gridSize / 2;
+
+      // Find the closest intersection point to the mouse
+      const nearestIntersectX = round(mousePos.x / gridSize) * gridSize;
+      const nearestIntersectY = round(mousePos.y / gridSize) * gridSize;
+
+      // Distance from this circle to the nearest intersection
+      const dx = gridX - nearestIntersectX;
+      const dy = gridY - nearestIntersectY;
+      const absDx = abs(dx);
+      const absDy = abs(dy);
+
+      // Inner 4 circles: at gridSize/2 in both directions
+      const isInner = absDx === gridSize / 2 && absDy === gridSize / 2;
+
+      // Layer 2: 4 corner circles
+      const isLayer2Corner = absDx === gridSize * 1.5 && absDy === gridSize * 1.5;
+
+      // Layer 3: 4 corner circles
+      const isLayer3Corner = absDx === gridSize * 2.5 && absDy === gridSize * 2.5;
+
+      if (isInner || isLayer2Corner || isLayer3Corner) {
+        // Calculate angle from circle to center point
+        const angleToCenter = atan2(-dy, -dx);
+        // Base wedge points at 45° (QUARTER_PI), so offset rotation
+        return angleToCenter - QUARTER_PI;
+      }
+
+      return null;
+    }
+
+    function draw() {
+      background(255);
+
+      // Update mouse position smoothly
+      if (mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height) {
+        mousePos.x = lerp(mousePos.x, mouseX, 0.1);
+        mousePos.y = lerp(mousePos.y, mouseY, 0.1);
+      }
+
+      // Update and draw circles
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const circle = circles[row][col];
+
+          // Calculate distance from mouse for influence
+          const distToMouse = dist(circle.x, circle.y, mousePos.x, mousePos.y);
+          const influenceRadius = gridSize * 4.5;
+          const influence = constrain(1 - distToMouse / influenceRadius, 0, 1);
+
+          // Get target rotation if this circle should form a square
+          const targetRot = getTargetRotation(row, col);
+
+          if (targetRot !== null && influence > 0.1) {
+            // Smoothly rotate toward target
+            let diff = targetRot - circle.rotation;
+            // Normalize angle difference to [-PI, PI]
+            while (diff > PI) diff -= TWO_PI;
+            while (diff < -PI) diff += TWO_PI;
+
+            circle.rotation += diff * 0.25 * influence;
+          } else {
+            // Drift freely with slight influence from mouse
+            circle.rotation += circle.baseSpeed * (1 + influence * 0.5);
+          }
+
+          // Keep rotation in bounds
+          circle.rotation = circle.rotation % TWO_PI;
+
+          // Draw the pacman-like circle
+          drawPacmanCircle(circle.x, circle.y, circleRadius, circle.rotation);
+        }
+      }
+    }
+
+    function drawPacmanCircle(x, y, r, rotation) {
+      fill(0);
+      noStroke();
+
+      push();
+      translate(x, y);
+      rotate(rotation);
+
+      // Draw arc (full circle minus the wedge)
+      // The wedge starts at -45 degrees and ends at +45 degrees (90 degree opening)
+      arc(0, 0, r * 2, r * 2,
+          QUARTER_PI + wedgeAngle / 2,
+          QUARTER_PI - wedgeAngle / 2 + TWO_PI);
+
+      pop();
+    }
+
+    function mouseMoved() {
+      return false; // Prevent default
+    }
+  </script>
+</SketchLayout>
