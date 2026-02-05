@@ -1,0 +1,127 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="creating vortices"
+  day={4}
+  description="click and hold to create vortices"
+>
+  <script is:inline>
+    const lineCount = 200;
+    const pointsPerLine = 200;
+
+    let vortices = [];
+    let vortexCounter = 0;
+    const vortexLifespan = 3000;
+    const maxVortexDist = 200;
+    const baseStrength = 0.3;
+    const holdRate = 2.5; // twist per second
+
+    let activeVortex = null;
+
+    function setup() {
+      const canvas = createCanvas(600, 600);
+      canvas.parent('sketch-container');
+      strokeWeight(1.5);
+      noFill();
+    }
+
+    function mousePressed() {
+      if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
+        activeVortex = {
+          x: mouseX,
+          y: mouseY,
+          startTime: millis(),
+          direction: vortexCounter % 2 === 0 ? 1 : -1
+        };
+        vortexCounter++;
+      }
+    }
+
+    function mouseReleased() {
+      if (activeVortex) {
+        const holdDuration = millis() - activeVortex.startTime;
+        const twist = baseStrength + (holdDuration / 1000) * holdRate;
+
+        vortices.push({
+          x: activeVortex.x,
+          y: activeVortex.y,
+          birthTime: millis(),
+          direction: activeVortex.direction,
+          twist: twist
+        });
+        activeVortex = null;
+      }
+    }
+
+    function applyVortex(x, y, vx, vy, twist, direction, strength) {
+      const dx = x - vx;
+      const dy = y - vy;
+      const dist = sqrt(dx * dx + dy * dy);
+
+      if (dist < maxVortexDist && dist > 0.1) {
+        const normalizedDist = dist / maxVortexDist;
+        const falloff = pow(1 - normalizedDist, 2);
+        const twistAngle = falloff * twist * strength * direction;
+
+        const cosA = cos(twistAngle);
+        const sinA = sin(twistAngle);
+        return {
+          x: vx + dx * cosA - dy * sinA,
+          y: vy + dx * sinA + dy * cosA
+        };
+      }
+      return { x, y };
+    }
+
+    function draw() {
+      background(255);
+
+      const now = millis();
+      vortices = vortices.filter(v => now - v.birthTime < vortexLifespan);
+
+      for (let i = 0; i < lineCount; i++) {
+        const baseY = map(i, 0, lineCount - 1, -100, height + 100);
+
+        if (i % 2 === 0) {
+          stroke(0);
+        } else {
+          stroke(255);
+        }
+
+        beginShape();
+        for (let j = 0; j <= pointsPerLine; j++) {
+          const baseX = map(j, 0, pointsPerLine, -100, width + 100);
+
+          let finalX = baseX;
+          let finalY = baseY;
+
+          // Apply released vortices (fading out)
+          for (let v of vortices) {
+            const age = now - v.birthTime;
+            const lifeProgress = age / vortexLifespan;
+            const fadeOut = 1 - lifeProgress * lifeProgress;
+
+            const result = applyVortex(finalX, finalY, v.x, v.y, v.twist, v.direction, fadeOut);
+            finalX = result.x;
+            finalY = result.y;
+          }
+
+          // Apply active vortex (growing)
+          if (activeVortex) {
+            const holdDuration = now - activeVortex.startTime;
+            const twist = baseStrength + (holdDuration / 1000) * holdRate;
+
+            const result = applyVortex(finalX, finalY, activeVortex.x, activeVortex.y, twist, activeVortex.direction, 1);
+            finalX = result.x;
+            finalY = result.y;
+          }
+
+          vertex(finalX, finalY);
+        }
+        endShape();
+      }
+    }
+  </script>
+</SketchLayout>
