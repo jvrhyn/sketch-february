@@ -1,0 +1,221 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="bending waves"
+  day={6}
+  description="move the obstacle with arrow keys"
+>
+  <script is:inline>
+    const waveSpacing = 20;
+    const dotSpacing = 7;
+    const dotSize = 1.8;
+    const waveSpeed = 95; // px per second
+    const sourceX = 300;
+    const sourceY = 300;
+    let obstacleRadius = 95;
+    const spawnMargin = 10;
+    const integrationStride = 16;
+    const obstacleMoveSpeed = 220; // px per second
+
+    let obstacle;
+    let radiusSlider;
+    const sourceAngle = Math.PI / 9; // 20 degrees
+    let dots = [];
+    let spawnCarry = 0;
+    let lastMs = 0;
+
+    function setup() {
+      const canvas = createCanvas(600, 600);
+      canvas.parent('sketch-container');
+
+      obstacle = {
+        x: width * 0.62,
+        y: height * 0.5
+      };
+
+      const controls = createDiv();
+      controls.parent('sketch-container');
+      controls.style('display', 'flex');
+      controls.style('align-items', 'center');
+      controls.style('justify-content', 'center');
+      controls.style('gap', '12px');
+      controls.style('padding', '12px 15px');
+      controls.style('background', '#111');
+
+      const radiusLabel = createSpan('size');
+      radiusLabel.parent(controls);
+      radiusLabel.style('color', '#888');
+      radiusLabel.style('font-size', '13px');
+
+      radiusSlider = createSlider(45, 190, obstacleRadius);
+      radiusSlider.parent(controls);
+      radiusSlider.style('width', '120px');
+
+      lastMs = millis();
+      seedWaves(sourceAngle);
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault();
+        }
+      }, { passive: false });
+    }
+
+    function draw() {
+      background(255);
+      noStroke();
+      fill(0);
+
+      const now = millis();
+      let dt = (now - lastMs) / 1000;
+      if (dt > 0.05) dt = 0.05;
+      lastMs = now;
+      obstacleRadius = radiusSlider.value();
+      updateObstaclePosition(dt);
+
+      const spawnInterval = waveSpacing / waveSpeed;
+      spawnCarry += dt;
+      while (spawnCarry >= spawnInterval) {
+        spawnCarry -= spawnInterval;
+        spawnFront(sourceAngle);
+      }
+
+      const a = obstacleRadius;
+      const a2 = a * a;
+      const clearance = a * 1.02;
+      const stepCount = Math.max(1, Math.ceil((waveSpeed * dt) / integrationStride));
+      const stepDt = dt / stepCount;
+
+      for (const d of dots) {
+        const dirX = Math.cos(d.angle);
+        const dirY = Math.sin(d.angle);
+        const tanX = -dirY;
+        const tanY = dirX;
+
+        for (let s = 0; s < stepCount; s++) {
+          const dx = d.x - obstacle.x;
+          const dy = d.y - obstacle.y;
+          const u = dx * dirX + dy * dirY;
+          const vv = dx * tanX + dy * tanY;
+          const r2 = u * u + vv * vv;
+          const safeR2 = Math.max(r2, a2 * 0.9);
+          const denom = safeR2 * safeR2;
+          const velU = 1 - (a2 * (u * u - vv * vv)) / denom;
+          const velV = (-2 * a2 * u * vv) / denom;
+
+          d.x += (velU * dirX + velV * tanX) * waveSpeed * stepDt;
+          d.y += (velU * dirY + velV * tanY) * waveSpeed * stepDt;
+
+          const ndx = d.x - obstacle.x;
+          const ndy = d.y - obstacle.y;
+          const nu = ndx * dirX + ndy * dirY;
+          const nv = ndx * tanX + ndy * tanY;
+          const rr = Math.hypot(nu, nv);
+          if (rr < clearance) {
+            const ang = Math.atan2(nv, nu);
+            const bu = Math.cos(ang) * clearance;
+            const bv = Math.sin(ang) * clearance;
+            d.x = obstacle.x + bu * dirX + bv * tanX;
+            d.y = obstacle.y + bu * dirY + bv * tanY;
+          }
+        }
+      }
+
+      dots = dots.filter((d) => d.x >= -260 && d.x <= width + 260 && d.y >= -260 && d.y <= height + 260);
+
+      for (const d of dots) {
+        circle(d.x, d.y, dotSize);
+      }
+    }
+
+    function spawnFront(angle) {
+      const frame = getSpawnFrame(angle);
+      spawnFrontAt(angle, frame.uStart, frame.vMin, frame.vMax);
+    }
+
+    function spawnFrontAt(angle, uStart, vMin, vMax) {
+      const dirX = Math.cos(angle);
+      const dirY = Math.sin(angle);
+      const tanX = -dirY;
+      const tanY = dirX;
+      for (let v = vMin; v <= vMax; v += dotSpacing) {
+        dots.push({
+          x: sourceX + uStart * dirX + v * tanX,
+          y: sourceY + uStart * dirY + v * tanY,
+          angle: angle,
+        });
+      }
+    }
+
+    function seedWaves(angle) {
+      dots = [];
+      const frame = getSpawnFrame(angle);
+      const depth = frame.uEnd - frame.uStart + waveSpacing * 2;
+      const count = Math.ceil(depth / waveSpacing);
+      for (let i = 0; i < count; i++) {
+        spawnFrontAt(angle, frame.uStart + i * waveSpacing, frame.vMin, frame.vMax);
+      }
+    }
+
+    function getSpawnFrame(angle) {
+      const dirX = Math.cos(angle);
+      const dirY = Math.sin(angle);
+      const tanX = -dirY;
+      const tanY = dirX;
+      const corners = [
+        { x: 0, y: 0 },
+        { x: width, y: 0 },
+        { x: width, y: height },
+        { x: 0, y: height }
+      ];
+
+      let minU = Infinity;
+      let maxU = -Infinity;
+      let minV = Infinity;
+      let maxV = -Infinity;
+      for (const c of corners) {
+        const dx = c.x - sourceX;
+        const dy = c.y - sourceY;
+        const u = dx * dirX + dy * dirY;
+        const v = dx * tanX + dy * tanY;
+        if (u < minU) minU = u;
+        if (u > maxU) maxU = u;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+
+      return {
+        uStart: minU - spawnMargin,
+        uEnd: maxU + spawnMargin,
+        vMin: minV - spawnMargin,
+        vMax: maxV + spawnMargin
+      };
+    }
+
+    function updateObstaclePosition(dt) {
+      let mx = 0;
+      let my = 0;
+      if (keyIsDown(LEFT_ARROW)) mx -= 1;
+      if (keyIsDown(RIGHT_ARROW)) mx += 1;
+      if (keyIsDown(UP_ARROW)) my -= 1;
+      if (keyIsDown(DOWN_ARROW)) my += 1;
+
+      if (mx !== 0 || my !== 0) {
+        const mag = Math.hypot(mx, my);
+        const step = obstacleMoveSpeed * dt;
+        obstacle.x += (mx / mag) * step;
+        obstacle.y += (my / mag) * step;
+        obstacle.x = constrain(obstacle.x, obstacleRadius + 4, width - obstacleRadius - 4);
+        obstacle.y = constrain(obstacle.y, obstacleRadius + 4, height - obstacleRadius - 4);
+      }
+    }
+
+    function keyPressed() {
+      if (keyCode === LEFT_ARROW || keyCode === RIGHT_ARROW || keyCode === UP_ARROW || keyCode === DOWN_ARROW) {
+        return false;
+      }
+    }
+  </script>
+</SketchLayout>
