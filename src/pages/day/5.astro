@@ -1,0 +1,148 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="nothing bagel"
+  day={5}
+  description="drag to rotate"
+>
+  <script is:inline>
+    const R = 150;
+    const r = 55;
+    const viewDist = 800;
+    const tubeWinds = 5;
+    const sphereSize = 8;
+
+    let particles = [];
+    let lastCount = 0;
+    let speedSlider, countSlider;
+
+    let rotX = 0.45;
+    let rotY = 0;
+    let dragging = false;
+    let lastMouseX, lastMouseY;
+
+    function setup() {
+      const canvas = createCanvas(600, 600);
+      canvas.parent('sketch-container');
+
+      const controls = createDiv();
+      controls.parent('sketch-container');
+      controls.style('display', 'flex');
+      controls.style('align-items', 'center');
+      controls.style('justify-content', 'center');
+      controls.style('gap', '16px');
+      controls.style('padding', '12px 15px');
+      controls.style('background', '#111');
+
+      addSlider(controls, 'particles', 20, 500, 200, function(s) { countSlider = s; });
+      addSlider(controls, 'speed', 0, 5, 1, function(s) { speedSlider = s; });
+
+      generateParticles(200);
+    }
+
+    function addSlider(parent, label, min, max, def, assign) {
+      const lbl = createSpan(label);
+      lbl.parent(parent);
+      lbl.style('color', '#888');
+      lbl.style('font-size', '13px');
+
+      const s = createSlider(min, max, def);
+      s.parent(parent);
+      s.style('width', '100px');
+      assign(s);
+    }
+
+    function generateParticles(count) {
+      particles = [];
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          uOffset: random(TWO_PI),
+          vOffset: random(TWO_PI),
+        });
+      }
+    }
+
+    function viewRotate(x, y, z) {
+      const y1 = y * cos(rotX) - z * sin(rotX);
+      const z1 = y * sin(rotX) + z * cos(rotX);
+      const x1 = x * cos(rotY) - z1 * sin(rotY);
+      const z2 = x * sin(rotY) + z1 * cos(rotY);
+      return { x: x1, y: y1, z: z2 };
+    }
+
+    function draw() {
+      background(255);
+      translate(width / 2, height / 2);
+
+      if (!dragging) {
+        rotY += 0.006;
+      }
+
+      const count = countSlider.value();
+      if (count > lastCount) {
+        for (let i = lastCount; i < count; i++) {
+          particles.push({ uOffset: random(TWO_PI), vOffset: random(TWO_PI) });
+        }
+      } else if (count < lastCount) {
+        particles.length = count;
+      }
+      lastCount = count;
+
+      const speed = speedSlider.value() * 0.0002;
+      const t = millis();
+
+      const drawn = [];
+
+      for (let i = 0; i < count; i++) {
+        const p = particles[i];
+        const u = speed * t + p.uOffset;
+        const v = tubeWinds * u + p.vOffset;
+
+        const x = (R + r * cos(v)) * cos(u);
+        const y = (R + r * cos(v)) * sin(u);
+        const z = r * sin(v);
+
+        const rot = viewRotate(x, y, z);
+        const perspective = viewDist / (viewDist + rot.z);
+
+        drawn.push({
+          sx: rot.x * perspective,
+          sy: rot.y * perspective,
+          sz: sphereSize * perspective,
+          depth: rot.z,
+        });
+      }
+
+      drawn.sort((a, b) => b.depth - a.depth);
+
+      noStroke();
+      fill(0);
+      for (const d of drawn) {
+        ellipse(d.sx, d.sy, d.sz, d.sz);
+      }
+    }
+
+    function mousePressed() {
+      if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
+        dragging = true;
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
+      }
+    }
+
+    function mouseDragged() {
+      if (dragging) {
+        rotY += (mouseX - lastMouseX) * 0.01;
+        rotX += (mouseY - lastMouseY) * 0.01;
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
+      }
+    }
+
+    function mouseReleased() {
+      dragging = false;
+    }
+  </script>
+</SketchLayout>
