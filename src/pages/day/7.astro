@@ -1,0 +1,163 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="water moon"
+  day={7}
+  description="move your mouse over the screen"
+>
+  <script is:inline>
+    let moonImg;
+    let dots = [];
+    let bgDots = [];
+    const GRID = 7;
+    const BG_GRID = 14;
+    const BG_DOT_R = 1;
+    const IMG_SIZE = 400;
+    let ripples = [];
+    let lastRippleTime = 0;
+
+    function preload() {
+      moonImg = loadImage('/moon.png');
+    }
+
+    function setup() {
+      const canvas = createCanvas(600, 600);
+      canvas.parent('sketch-container');
+
+      moonImg.resize(IMG_SIZE, IMG_SIZE);
+      moonImg.loadPixels();
+
+      const ox = (width - IMG_SIZE) / 2;
+      const oy = (height - IMG_SIZE) / 2;
+
+      const moonCells = new Set();
+
+      for (let gy = 0; gy < IMG_SIZE; gy += GRID) {
+        for (let gx = 0; gx < IMG_SIZE; gx += GRID) {
+          let bright = 0, alpha = 0, n = 0;
+          for (let dy = 0; dy < GRID && gy + dy < IMG_SIZE; dy++) {
+            for (let dx = 0; dx < GRID && gx + dx < IMG_SIZE; dx++) {
+              const i = ((gy + dy) * IMG_SIZE + (gx + dx)) * 4;
+              bright += (moonImg.pixels[i] + moonImg.pixels[i + 1] + moonImg.pixels[i + 2]) / 3;
+              alpha += moonImg.pixels[i + 3];
+              n++;
+            }
+          }
+          bright /= n;
+          alpha /= n;
+          if (alpha < 30) continue;
+
+          const darkness = (1 - bright / 255) * (alpha / 255);
+          const targetR = GRID * 0.55 * Math.sqrt(darkness);
+          if (targetR < 0.3) continue;
+
+          const px = ox + gx + GRID / 2;
+          const py = oy + gy + GRID / 2;
+
+          dots.push({ targetX: px, targetY: py, targetR: targetR });
+
+          const bgCol = Math.floor(px / BG_GRID);
+          const bgRow = Math.floor(py / BG_GRID);
+          moonCells.add(bgCol + ',' + bgRow);
+        }
+      }
+
+      for (let y = BG_GRID / 2; y < height; y += BG_GRID) {
+        for (let x = BG_GRID / 2; x < width; x += BG_GRID) {
+          const key = Math.floor(x / BG_GRID) + ',' + Math.floor(y / BG_GRID);
+          if (!moonCells.has(key)) {
+            bgDots.push({ targetX: x, targetY: y, targetR: BG_DOT_R });
+          }
+        }
+      }
+    }
+
+    function draw() {
+      background(255);
+      noStroke();
+      fill(0);
+
+      const now = millis();
+
+      const mouseMoved = dist(mouseX, mouseY, pmouseX, pmouseY);
+      if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height
+          && mouseMoved > 1 && now - lastRippleTime > 40) {
+        ripples.push({
+          cx: mouseX,
+          cy: mouseY,
+          startTime: now,
+          speed: 180,
+          amplitude: 10,
+        });
+        lastRippleTime = now;
+      }
+
+      ripples = ripples.filter(r => (now - r.startTime) < 5000);
+
+      const wavelength = 20;
+      const twoPiOverWL = TWO_PI / wavelength;
+      const invTwoWLSq = 1 / (2 * wavelength * wavelength);
+
+      const allDots = bgDots.concat(dots);
+
+      for (const d of allDots) {
+        let offX = 0;
+        let offY = 0;
+        let sizeScale = 1;
+
+        for (const r of ripples) {
+          const dx = d.targetX - r.cx;
+          const dy = d.targetY - r.cy;
+          const dSq = dx * dx + dy * dy;
+          if (dSq < 1) continue;
+          const dd = Math.sqrt(dSq);
+
+          const age = (now - r.startTime) / 1000;
+          const wavefrontR = r.speed * age;
+          const distFromWave = dd - wavefrontR;
+
+          const env = Math.exp(-distFromWave * distFromWave * invTwoWLSq);
+          if (env < 0.01) continue;
+
+          const osc = Math.sin(distFromWave * twoPiOverWL);
+          const fade = Math.exp(-age * 1.2);
+
+          const disp = r.amplitude * osc * env * fade;
+          const nx = dx / dd;
+          const ny = dy / dd;
+
+          offX += nx * disp;
+          offY += ny * disp;
+          sizeScale += osc * env * fade * 0.2;
+        }
+
+        circle(
+          d.targetX + offX,
+          d.targetY + offY,
+          d.targetR * Math.max(0.1, sizeScale) * 2
+        );
+      }
+    }
+  </script>
+  <style>
+    .attribution {
+      text-align: center;
+      max-width: 600px;
+      margin: 1.5rem auto 0;
+      padding: 0 2rem;
+      font-size: 0.75rem;
+      opacity: 0.45;
+      line-height: 1.5;
+    }
+    .attribution a {
+      color: inherit;
+    }
+  </style>
+  <p class="attribution">
+    Moon image &copy; <a href="https://commons.wikimedia.org/wiki/User:Nevit" target="_blank" rel="noopener">Nevit Dilmen</a>,
+    licensed under <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener">CC BY-SA 3.0</a>.
+    Modified (halftone rendering).
+  </p>
+</SketchLayout>
