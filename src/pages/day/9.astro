@@ -1,0 +1,108 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="dripping ink"
+  day={9}
+  description="click to drop ink"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    let spreadSpeed = 1.0;
+    let speedSlider;
+    const MAX_RADIUS = 950;
+    const WORLD_NOISE_SCALE = 0.012;
+    const NOISE_STRENGTH = 50;
+
+    let drops = [];
+    let noiseField;
+
+    function addDrop(x, y, color) {
+      drops.push({
+        x: x,
+        y: y,
+        color: color,
+        radius: 0,
+      });
+    }
+
+    function setup() {
+      const canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      pixelDensity(1);
+
+      // Pre-compute world-space noise field
+      noiseField = new Float32Array(W * H);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          noiseField[y * W + x] = noise(x * WORLD_NOISE_SCALE, y * WORLD_NOISE_SCALE) * NOISE_STRENGTH;
+        }
+      }
+
+      const controls = createDiv();
+      controls.parent('sketch-container');
+      controls.style('display', 'flex');
+      controls.style('align-items', 'center');
+      controls.style('justify-content', 'center');
+      controls.style('gap', '12px');
+      controls.style('padding', '12px 15px');
+      controls.style('background', '#111');
+
+      const label = createSpan('speed');
+      label.parent(controls);
+      label.style('color', '#888');
+      label.style('font-size', '13px');
+
+      speedSlider = createSlider(0.2, 4, 1, 0.1);
+      speedSlider.parent(controls);
+      speedSlider.style('width', '120px');
+
+      // Start with a black drop in the center
+      addDrop(W / 2, H / 2, 0);
+    }
+
+    function draw() {
+      for (const drop of drops) {
+        if (drop.radius < MAX_RADIUS) {
+          drop.radius += speedSlider.value();
+        }
+      }
+
+      // Per-pixel: find newest drop containing each pixel
+      loadPixels();
+      for (let y = 0; y < H; y++) {
+        const yOff = y * W;
+        for (let x = 0; x < W; x++) {
+          const n = noiseField[yOff + x];
+          let c = 255; // background white
+          for (let i = drops.length - 1; i >= 0; i--) {
+            const drop = drops[i];
+            const dx = x - drop.x;
+            const dy = y - drop.y;
+            const threshold = drop.radius + n;
+            if (dx * dx + dy * dy < threshold * threshold) {
+              c = drop.color;
+              break;
+            }
+          }
+          const idx = (yOff + x) * 4;
+          pixels[idx] = c;
+          pixels[idx + 1] = c;
+          pixels[idx + 2] = c;
+          pixels[idx + 3] = 255;
+        }
+      }
+      updatePixels();
+    }
+
+    function mousePressed() {
+      if (mouseX < 0 || mouseX > W || mouseY < 0 || mouseY > H) return;
+      // Sample the pixel color under the click, drop the opposite
+      const idx = (Math.floor(mouseY) * W + Math.floor(mouseX)) * 4;
+      const brightness = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      addDrop(mouseX, mouseY, brightness > 127 ? 0 : 255);
+    }
+  </script>
+</SketchLayout>
