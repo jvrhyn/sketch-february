@@ -1,0 +1,185 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="form is emptiness"
+  day={8}
+  description="drag across the boundary"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const HALF = H / 2;
+    const TINY = 11;
+    const STEP = 12;
+    const CHAR_SIZE = 260;
+    const SPEED = 0.8;
+    const LENS_R = 80;
+
+    let topMask;
+    let bottomMask;
+    let cols, rows;
+
+    function buildMask(char, fontSize, cx, cy) {
+      const buf = createGraphics(W, HALF);
+      buf.pixelDensity(1);
+      buf.background(0);
+      buf.fill(255);
+      buf.noStroke();
+      buf.textAlign(CENTER, CENTER);
+      buf.textSize(fontSize);
+      buf.textStyle(BOLD);
+      buf.text(char, cx, cy);
+      buf.loadPixels();
+
+      const grid = [];
+      for (let r = 0; r < rows; r++) {
+        grid[r] = [];
+        for (let c = 0; c < cols; c++) {
+          const i = (r * STEP * W + c * STEP) * 4;
+          grid[r][c] = buf.pixels[i] > 128;
+        }
+      }
+      buf.remove();
+      return grid;
+    }
+
+    function setup() {
+      const canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      textAlign(CENTER, CENTER);
+
+      cols = Math.ceil(W / STEP);
+      rows = Math.ceil(HALF / STEP);
+
+      topMask = buildMask('色', CHAR_SIZE, W / 2, HALF / 2);
+      bottomMask = buildMask('空', CHAR_SIZE, W / 2, HALF / 2);
+    }
+
+    function draw() {
+      background(255);
+      noStroke();
+      textStyle(NORMAL);
+      textSize(TINY);
+
+      const onCanvas = mouseX > 0 && mouseX < W && mouseY > 0 && mouseY < H;
+      const cursorInTop = onCanvas && mouseY < HALF;
+      const cursorInBottom = onCanvas && mouseY >= HALF;
+
+      // Lens
+      const lensActive = onCanvas;
+      const lensX = mouseX;
+      const lensY = mouseY;
+      const lensRSq = LENS_R * LENS_R;
+
+      const t = frameCount * SPEED;
+      const offset = t % STEP;
+
+      // --- Top half ---
+      for (let row = -1; row <= rows; row++) {
+        const drawY = row * STEP + offset;
+        if (drawY < -STEP || drawY >= HALF) continue;
+
+        const fade = constrain(drawY / 24, 0, 1) * constrain((HALF - drawY) / 24, 0, 1);
+        const maskRow = (((row - Math.floor(t / STEP)) % rows) + rows) % rows;
+
+        for (let col = 0; col < cols; col++) {
+          const drawX = col * STEP;
+          const inShape = topMask[maskRow] && topMask[maskRow][col];
+
+          if (cursorInTop) {
+            // Cursor in top: field of 色, 色 as negative space, lens reveals 空
+            let inLens = false;
+            const dx = drawX - lensX;
+            const dy = drawY - lensY;
+            inLens = dx * dx + dy * dy < lensRSq;
+
+            if (inLens) {
+              if (inShape) {
+                fill(0, fade * 255);
+                text('空', drawX, drawY);
+              }
+            } else {
+              if (!inShape) {
+                fill(0, fade * 255);
+                text('色', drawX, drawY);
+              }
+            }
+          } else if (cursorInBottom) {
+            // Cursor in bottom: 色 shape made of 空 (positive space only)
+            if (inShape) {
+              fill(0, fade * 255);
+              text('空', drawX, drawY);
+            }
+          } else {
+            // Off canvas: field of 色, 色 as negative space
+            if (!inShape) {
+              fill(0, fade * 255);
+              text('色', drawX, drawY);
+            }
+          }
+        }
+      }
+
+      // --- Bottom half ---
+      // Cursor in top/off: 空 shape made of 空 (positive space only)
+      // Cursor in bottom: field of 空 everywhere, 空 shape as negative space
+      //   Lens: clears 空, fills 空 shape with 色
+      for (let row = -1; row <= rows; row++) {
+        const drawY = H - (row * STEP + offset);
+        if (drawY <= HALF || drawY > H + STEP) continue;
+
+        const fade = constrain((drawY - HALF) / 24, 0, 1) * constrain((H - drawY) / 24, 0, 1);
+        const maskRow = (((row - Math.floor(t / STEP)) % rows) + rows) % rows;
+
+        for (let col = 0; col < cols; col++) {
+          const drawX = col * STEP;
+          const inShape = bottomMask[maskRow] && bottomMask[maskRow][col];
+
+          if (cursorInBottom) {
+            // Field of 空 with negative space + lens
+            let inLens = false;
+            if (lensActive) {
+              const dx = drawX - lensX;
+              const dy = drawY - lensY;
+              inLens = dx * dx + dy * dy < lensRSq;
+            }
+
+            if (inLens) {
+              // Inside lens: draw 色 where the 空 shape is
+              if (inShape) {
+                fill(0, fade * 160);
+                push();
+                translate(drawX, drawY);
+                rotate(PI);
+                text('色', 0, 0);
+                pop();
+              }
+            } else {
+              // Outside lens: draw 空 except where shape is
+              if (!inShape) {
+                fill(0, fade * 160);
+                push();
+                translate(drawX, drawY);
+                rotate(PI);
+                text('空', 0, 0);
+                pop();
+              }
+            }
+          } else {
+            // Cursor in top or off canvas: 空 shape made of 色
+            if (inShape) {
+              fill(0, fade * 160);
+              push();
+              translate(drawX, drawY);
+              rotate(PI);
+              text('色', 0, 0);
+              pop();
+            }
+          }
+        }
+      }
+    }
+  </script>
+</SketchLayout>
