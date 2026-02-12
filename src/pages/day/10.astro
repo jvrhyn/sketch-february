@@ -1,0 +1,167 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="dropping words"
+  day={10}
+  description="type a word and watch it pour"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const RAIN_COUNT = 200;
+
+    let words = [];
+    let currentWord = '';
+    let inputEl, submitBtn, controlsDiv;
+    let raining = false;
+    let firstBatchDone = false;
+    let fadeInStart = 0;
+    const FADE_IN_DURATION = 1500;
+
+    function spawnRain(word) {
+      words = [];
+      for (let i = 0; i < RAIN_COUNT; i++) {
+        words.push({
+          text: word,
+          x: random(W),
+          y: random(-H * 0.5, -10),
+          speed: random(4, 9),
+          size: random(10, 32),
+          opacity: random(80, 255),
+          wobble: 0,
+          rotation: 0,
+        });
+      }
+      raining = true;
+      controlsDiv.style('opacity', '0');
+      controlsDiv.style('pointer-events', 'none');
+    }
+
+    function setup() {
+      const container = select('#sketch-container');
+      container.style('position', 'relative');
+
+      const canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+
+      controlsDiv = createDiv();
+      controlsDiv.parent('sketch-container');
+      controlsDiv.style('position', 'absolute');
+      controlsDiv.style('top', '50%');
+      controlsDiv.style('left', '50%');
+      controlsDiv.style('transform', 'translate(-50%, -50%)');
+      controlsDiv.style('display', 'flex');
+      controlsDiv.style('align-items', 'center');
+      controlsDiv.style('gap', '0');
+      controlsDiv.style('z-index', '10');
+      controlsDiv.style('transition', 'opacity 0.4s');
+
+      inputEl = createElement('input');
+      inputEl.parent(controlsDiv);
+      inputEl.attribute('type', 'text');
+      inputEl.attribute('placeholder', 'word or phrase...');
+      inputEl.attribute('maxlength', '40');
+      inputEl.style('width', '220px');
+      inputEl.style('padding', '8px 12px');
+      inputEl.style('font-family', '"Arial", Arial, monospace');
+      inputEl.style('font-size', '15px');
+      inputEl.style('background', '#fff');
+      inputEl.style('color', '#111');
+      inputEl.style('border', '2px solid #222');
+      inputEl.style('border-right', 'none');
+      inputEl.style('border-radius', '4px 0 0 4px');
+      inputEl.style('outline', 'none');
+      inputEl.style('box-shadow', 'inset 1px 1px 3px rgba(0,0,0,0.08)');
+      inputEl.style('letter-spacing', '0.5px');
+
+      submitBtn = createButton('submit');
+      submitBtn.parent(controlsDiv);
+      submitBtn.style('padding', '8px 18px');
+      submitBtn.style('font-family', '"Arial", Arial, monospace');
+      submitBtn.style('font-size', '15px');
+      submitBtn.style('background', '#222');
+      submitBtn.style('color', '#fff');
+      submitBtn.style('border', '2px solid #222');
+      submitBtn.style('border-radius', '0 4px 4px 0');
+      submitBtn.style('cursor', 'pointer');
+      submitBtn.style('letter-spacing', '0.5px');
+      submitBtn.style('transition', 'background 0.2s');
+
+      submitBtn.mouseOver(() => submitBtn.style('background', '#000'));
+      submitBtn.mouseOut(() => submitBtn.style('background', '#222'));
+
+      function submitWord() {
+        const val = inputEl.value().trim();
+        if (val.length > 0) {
+          currentWord = val;
+          spawnRain(currentWord);
+        }
+      }
+
+      submitBtn.mousePressed(submitWord);
+
+      inputEl.elt.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submitWord();
+      });
+
+      // Click canvas to show input again when visible
+      canvas.mousePressed(() => {
+        if (firstBatchDone) {
+          raining = false;
+          firstBatchDone = false;
+          words = [];
+          inputEl.value('');
+          controlsDiv.style('opacity', '1');
+          controlsDiv.style('pointer-events', 'auto');
+        }
+      });
+
+      textFont('Arial, Helvetica, sans-serif');
+      textAlign(CENTER, CENTER);
+    }
+
+    function draw() {
+      background(255);
+
+      if (!raining) {
+        return;
+      }
+
+      noStroke();
+      let allDone = true;
+      for (const w of words) {
+        w.y += w.speed;
+        w.x += w.wobble;
+
+        if (w.y < H + 50) {
+          allDone = false;
+        }
+
+        push();
+        translate(w.x, w.y);
+        rotate(w.rotation);
+        fill(0, w.opacity);
+        textSize(w.size);
+        textFont('Arial');
+        text(w.text, 0, 0);
+        pop();
+      }
+
+      // After first batch falls, fade the input back in
+      if (allDone && currentWord) {
+        if (!firstBatchDone) {
+          firstBatchDone = true;
+          fadeInStart = millis();
+        }
+        const elapsed = millis() - fadeInStart;
+        const t = constrain(elapsed / FADE_IN_DURATION, 0, 1);
+        controlsDiv.style('opacity', String(t));
+        if (t >= 1) {
+          controlsDiv.style('pointer-events', 'auto');
+        }
+      }
+    }
+  </script>
+</SketchLayout>
