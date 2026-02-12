@@ -1,0 +1,213 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="more moiré"
+  day={13}
+  description="rotate the cube"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const cx = W / 2;
+    const cy = H / 2;
+    const S = 140;
+
+    const LINE_SPACING = 5;
+    const SAMPLE_STEP = 4;
+    const LINE_ANGLE_1 = Math.PI / 6;
+
+    const cubeVerts = [
+      [-S,-S,-S],[S,-S,-S],[S,S,-S],[-S,S,-S],
+      [-S,-S,S],[S,-S,S],[S,S,S],[-S,S,S]
+    ];
+
+    const cubeFaces = [
+      { vi: [0,1,2,3], n: [0,0,-1] },
+      { vi: [5,4,7,6], n: [0,0,1] },
+      { vi: [4,0,3,7], n: [-1,0,0] },
+      { vi: [1,5,6,2], n: [1,0,0] },
+      { vi: [4,5,1,0], n: [0,-1,0] },
+      { vi: [3,2,6,7], n: [0,1,0] },
+    ];
+
+    const cubeEdges = [
+      [0,1],[1,2],[2,3],[3,0],
+      [4,5],[5,6],[6,7],[7,4],
+      [0,4],[1,5],[2,6],[3,7]
+    ];
+
+    let mainCtx, pg;
+    let axRot = 0, ayRot = 0;
+    let lowerBuf;
+    let diag, numLines, stepsPerLine;
+    let xSlider, ySlider;
+    let dragging = false;
+
+    function rot3(x, y, z, ax, ay) {
+      let cosY = Math.cos(ay), sinY = Math.sin(ay);
+      let cosX = Math.cos(ax), sinX = Math.sin(ax);
+      let x1 = x * cosY - z * sinY;
+      let z1 = x * sinY + z * cosY;
+      let y1 = y * cosX - z1 * sinX;
+      let z2 = y * sinX + z1 * cosX;
+      return [x1, y1, z2];
+    }
+
+    function drawHatchLayer(pxData, angle, maxHalf) {
+      let dx = Math.cos(angle);
+      let dy = -Math.sin(angle);
+      let nx = -dy;
+      let ny = dx;
+      let minHalf = 0.15;
+      let range = maxHalf - minHalf;
+
+      for (let li = 0; li <= numLines; li++) {
+        let perpOff = (li - numLines / 2) * LINE_SPACING;
+        let bx = cx + nx * perpOff;
+        let by = cy + ny * perpOff;
+
+        mainCtx.beginPath();
+
+        let lowerIdx = 0;
+        let started = false;
+
+        for (let si = 0; si <= stepsPerLine; si++) {
+          let t = (si - stepsPerLine / 2) * SAMPLE_STEP;
+          let lx = bx + dx * t;
+          let ly = by + dy * t;
+
+          let px = Math.round(lx);
+          let py = Math.round(ly);
+          let brightness = 255;
+          if (px >= 0 && px < W && py >= 0 && py < H) {
+            brightness = pxData[(py * W + px) * 4];
+          }
+
+          let halfW = minHalf + range * (1 - brightness / 255);
+
+          let ux = lx + nx * halfW;
+          let uy = ly + ny * halfW;
+
+          if (!started) {
+            mainCtx.moveTo(ux, uy);
+            started = true;
+          } else {
+            mainCtx.lineTo(ux, uy);
+          }
+
+          lowerBuf[lowerIdx++] = lx - nx * halfW;
+          lowerBuf[lowerIdx++] = ly - ny * halfW;
+        }
+
+        for (let k = lowerIdx - 2; k >= 0; k -= 2) {
+          mainCtx.lineTo(lowerBuf[k], lowerBuf[k + 1]);
+        }
+
+        mainCtx.closePath();
+        mainCtx.fill();
+      }
+    }
+
+    function setup() {
+      let canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      mainCtx = canvas.elt.getContext('2d');
+      pixelDensity(1);
+
+      pg = createGraphics(W, H);
+      pg.pixelDensity(1);
+
+      diag = Math.sqrt(W * W + H * H);
+      numLines = Math.ceil(diag / LINE_SPACING);
+      stepsPerLine = Math.ceil(diag / SAMPLE_STEP);
+      lowerBuf = new Float64Array((stepsPerLine + 1) * 2);
+
+      let controls = createDiv();
+      controls.parent('sketch-container');
+      controls.style('display', 'flex');
+      controls.style('align-items', 'center');
+      controls.style('justify-content', 'center');
+      controls.style('gap', '10px');
+      controls.style('margin-top', '12px');
+
+      let xLabel = createSpan('x');
+      xLabel.parent(controls);
+      xLabel.style('color', '#888');
+      xLabel.style('font-size', '13px');
+
+      xSlider = createSlider(0, 360, 30);
+      xSlider.parent(controls);
+      xSlider.style('width', '100px');
+
+      let yLabel = createSpan('y');
+      yLabel.parent(controls);
+      yLabel.style('color', '#888');
+      yLabel.style('font-size', '13px');
+
+      ySlider = createSlider(0, 360, 45);
+      ySlider.parent(controls);
+      ySlider.style('width', '100px');
+    }
+
+    function draw() {
+      axRot = xSlider.value() * Math.PI / 180;
+      ayRot = ySlider.value() * Math.PI / 180;
+
+      // --- Render cube to offscreen buffer ---
+      pg.background(255);
+
+      let rv = cubeVerts.map(v => rot3(v[0], v[1], v[2], axRot, ayRot));
+      let pv = rv.map(r => ({ x: r[0] + cx, y: r[1] + cy, z: r[2] }));
+
+      let llx = 0.3, lly = -0.5, llz = 0.7;
+      let ll = Math.sqrt(llx*llx + lly*lly + llz*llz);
+      llx /= ll; lly /= ll; llz /= ll;
+
+      let faceList = [];
+      for (let f of cubeFaces) {
+        let rn = rot3(f.n[0], f.n[1], f.n[2], axRot, ayRot);
+        if (rn[2] <= 0) continue;
+        let dot = rn[0]*llx + rn[1]*lly + rn[2]*llz;
+        let shade = Math.max(0.15, Math.min(1, dot));
+        let avgZ = (rv[f.vi[0]][2] + rv[f.vi[1]][2] + rv[f.vi[2]][2] + rv[f.vi[3]][2]) / 4;
+        faceList.push({ vi: f.vi, shade, avgZ });
+      }
+      faceList.sort((a, b) => a.avgZ - b.avgZ);
+
+      pg.noStroke();
+      for (let f of faceList) {
+        let g = Math.round(20 + f.shade * 80);
+        pg.fill(g);
+        pg.beginShape();
+        for (let vi of f.vi) pg.vertex(pv[vi].x, pv[vi].y);
+        pg.endShape(CLOSE);
+      }
+
+      pg.stroke(0);
+      pg.strokeWeight(3);
+      for (let [a, b] of cubeEdges) {
+        pg.line(pv[a].x, pv[a].y, pv[b].x, pv[b].y);
+      }
+
+      pg.loadPixels();
+      let pxData = pg.pixels;
+
+      // --- Draw first hatching layer (fixed angle) ---
+      mainCtx.fillStyle = '#fff';
+      mainCtx.fillRect(0, 0, W, H);
+      mainCtx.fillStyle = '#000';
+      drawHatchLayer(pxData, LINE_ANGLE_1, LINE_SPACING * 0.42);
+
+      // --- Draw second hatching layer (auto-rotating) with multiply blend ---
+      let angle2 = frameCount * 0.005;
+      mainCtx.globalCompositeOperation = 'multiply';
+      mainCtx.fillStyle = '#fff';
+      mainCtx.fillRect(0, 0, W, H);
+      mainCtx.fillStyle = '#000';
+      drawHatchLayer(pxData, angle2, LINE_SPACING * 0.42);
+      mainCtx.globalCompositeOperation = 'source-over';
+    }
+  </script>
+</SketchLayout>
