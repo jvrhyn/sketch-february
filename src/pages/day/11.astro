@@ -1,0 +1,293 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="eroding shapes"
+  day={11}
+  description="draw a shape, then watch it erode"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+
+    let isDrawing = false;
+    let hasContent = false;
+    let eroding = false;
+    let hasDrawnBefore = false;
+    let lastX, lastY;
+    let currentStroke = [];
+    const CLOSE_DIST = 20;
+
+    let pg; // offscreen buffer for accumulating strokes
+
+    let grid;
+    let boundaryList = [];
+    let boundarySet;
+    let totalPixels = 0;
+    let erodeRate = 100;
+
+    let erodeBtn;
+    let controlsDiv;
+
+    function setup() {
+      const container = select('#sketch-container');
+      container.style('position', 'relative');
+
+      const canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      pixelDensity(1);
+
+      pg = createGraphics(W, H);
+      pg.pixelDensity(1);
+      pg.background(255);
+
+      controlsDiv = createDiv();
+      controlsDiv.parent('sketch-container');
+      controlsDiv.style('position', 'absolute');
+      controlsDiv.style('bottom', '30px');
+      controlsDiv.style('left', '50%');
+      controlsDiv.style('transform', 'translateX(-50%)');
+      controlsDiv.style('z-index', '10');
+      controlsDiv.style('transition', 'opacity 0.4s');
+      controlsDiv.style('opacity', '0');
+      controlsDiv.style('pointer-events', 'none');
+
+      erodeBtn = createButton('activate erosion');
+      erodeBtn.parent(controlsDiv);
+      erodeBtn.style('padding', '12px 24px');
+      erodeBtn.style('font-family', 'Helvetica, Arial, sans-serif');
+      erodeBtn.style('font-size', '16px');
+      erodeBtn.style('background', '#222');
+      erodeBtn.style('color', '#fff');
+      erodeBtn.style('border', '2px solid #444');
+      erodeBtn.style('border-radius', '4px');
+      erodeBtn.style('cursor', 'pointer');
+      erodeBtn.style('letter-spacing', '0.5px');
+      erodeBtn.style('transition', 'background 0.2s');
+
+      erodeBtn.mouseOver(() => erodeBtn.style('background', '#000'));
+      erodeBtn.mouseOut(() => erodeBtn.style('background', '#222'));
+
+      erodeBtn.mousePressed(() => {
+        startErosion();
+      });
+
+      cursor(CROSS);
+    }
+
+    function draw() {
+      if (eroding) {
+        erodeStep();
+        drawGrid();
+
+        if (boundaryList.length === 0) {
+          eroding = false;
+          hasContent = false;
+          hasDrawnBefore = true;
+          grid = null;
+          pg.background(255);
+        }
+        return;
+      }
+
+      background(255);
+      image(pg, 0, 0);
+
+      // Snap indicator when near start of current stroke
+      if (isDrawing && currentStroke.length > 30) {
+        let d = dist(mouseX, mouseY, currentStroke[0].x, currentStroke[0].y);
+        if (d < CLOSE_DIST) {
+          noStroke();
+          fill(0, 60);
+          ellipse(currentStroke[0].x, currentStroke[0].y, CLOSE_DIST * 2, CLOSE_DIST * 2);
+        }
+      }
+
+      if (!hasContent && !isDrawing) {
+        fill(180);
+        noStroke();
+        textSize(14);
+        textAlign(CENTER, CENTER);
+        textFont('Helvetica');
+        text(hasDrawnBefore ? 'draw again' : 'draw a shape', W / 2, H / 2);
+      }
+    }
+
+    function mousePressed() {
+      if (eroding) return;
+      if (mouseX < 0 || mouseX >= W || mouseY < 0 || mouseY >= H) return;
+
+      isDrawing = true;
+      lastX = mouseX;
+      lastY = mouseY;
+      currentStroke = [{ x: mouseX, y: mouseY }];
+    }
+
+    function mouseDragged() {
+      if (!isDrawing) return;
+      if (mouseX < 0 || mouseX >= W || mouseY < 0 || mouseY >= H) return;
+
+      pg.stroke(0);
+      pg.strokeWeight(4);
+      pg.strokeCap(ROUND);
+      pg.strokeJoin(ROUND);
+      pg.line(lastX, lastY, mouseX, mouseY);
+
+      currentStroke.push({ x: mouseX, y: mouseY });
+      lastX = mouseX;
+      lastY = mouseY;
+
+      if (!hasContent) {
+        hasContent = true;
+        controlsDiv.style('opacity', '1');
+        controlsDiv.style('pointer-events', 'auto');
+      }
+    }
+
+    function mouseReleased() {
+      if (!isDrawing) return;
+      isDrawing = false;
+
+      // If stroke ends near its start, fill it as a closed shape
+      if (currentStroke.length > 30) {
+        let d = dist(
+          currentStroke[0].x, currentStroke[0].y,
+          currentStroke[currentStroke.length - 1].x, currentStroke[currentStroke.length - 1].y
+        );
+        if (d < CLOSE_DIST) {
+          pg.fill(0);
+          pg.noStroke();
+          pg.beginShape();
+          for (let p of currentStroke) {
+            pg.vertex(p.x, p.y);
+          }
+          pg.endShape(CLOSE);
+        }
+      }
+
+      currentStroke = [];
+    }
+
+    function startErosion() {
+      grid = new Uint8Array(W * H);
+
+      pg.loadPixels();
+      totalPixels = 0;
+      for (let i = 0; i < W * H; i++) {
+        if (pg.pixels[i * 4] < 128) {
+          grid[i] = 1;
+          totalPixels++;
+        }
+      }
+
+      if (totalPixels === 0) return;
+
+      erodeRate = max(10, floor(totalPixels / 200));
+
+      boundarySet = new Set();
+      boundaryList = [];
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          let idx = y * W + x;
+          if (grid[idx] === 1 && isBoundaryPixel(x, y)) {
+            boundarySet.add(idx);
+            boundaryList.push(idx);
+          }
+        }
+      }
+
+      eroding = true;
+      controlsDiv.style('opacity', '0');
+      controlsDiv.style('pointer-events', 'none');
+    }
+
+    function isBoundaryPixel(x, y) {
+      if (x === 0 || x === W - 1 || y === 0 || y === H - 1) return true;
+      if (grid[y * W + (x - 1)] === 0) return true;
+      if (grid[y * W + (x + 1)] === 0) return true;
+      if (grid[(y - 1) * W + x] === 0) return true;
+      if (grid[(y + 1) * W + x] === 0) return true;
+      return false;
+    }
+
+    function erodeStep() {
+      let count = min(erodeRate, boundaryList.length);
+
+      for (let i = 0; i < count; i++) {
+        if (boundaryList.length === 0) break;
+
+        let ri = floor(random(boundaryList.length));
+        let idx = boundaryList[ri];
+
+        // Swap with last and pop
+        boundaryList[ri] = boundaryList[boundaryList.length - 1];
+        boundaryList.pop();
+
+        grid[idx] = 0;
+        boundarySet.delete(idx);
+
+        let x = idx % W;
+        let y = floor(idx / W);
+
+        // Expose neighbors
+        let nx, ny, nIdx;
+
+        nx = x - 1; ny = y;
+        if (nx >= 0) {
+          nIdx = ny * W + nx;
+          if (grid[nIdx] === 1 && !boundarySet.has(nIdx)) {
+            boundarySet.add(nIdx);
+            boundaryList.push(nIdx);
+          }
+        }
+
+        nx = x + 1; ny = y;
+        if (nx < W) {
+          nIdx = ny * W + nx;
+          if (grid[nIdx] === 1 && !boundarySet.has(nIdx)) {
+            boundarySet.add(nIdx);
+            boundaryList.push(nIdx);
+          }
+        }
+
+        nx = x; ny = y - 1;
+        if (ny >= 0) {
+          nIdx = ny * W + nx;
+          if (grid[nIdx] === 1 && !boundarySet.has(nIdx)) {
+            boundarySet.add(nIdx);
+            boundaryList.push(nIdx);
+          }
+        }
+
+        nx = x; ny = y + 1;
+        if (ny < H) {
+          nIdx = ny * W + nx;
+          if (grid[nIdx] === 1 && !boundarySet.has(nIdx)) {
+            boundarySet.add(nIdx);
+            boundaryList.push(nIdx);
+          }
+        }
+      }
+    }
+
+    function drawGrid() {
+      loadPixels();
+      for (let i = 0; i < W * H; i++) {
+        let pi = i * 4;
+        if (grid[i] === 1) {
+          pixels[pi] = 0;
+          pixels[pi + 1] = 0;
+          pixels[pi + 2] = 0;
+          pixels[pi + 3] = 255;
+        } else {
+          pixels[pi] = 255;
+          pixels[pi + 1] = 255;
+          pixels[pi + 2] = 255;
+          pixels[pi + 3] = 255;
+        }
+      }
+      updatePixels();
+    }
+  </script>
+</SketchLayout>
