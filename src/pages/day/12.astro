@@ -1,0 +1,126 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="no-self"
+  day={12}
+  description="無我"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const cx = W / 2;
+    const cy = H / 2;
+
+    const FOCAL = 180;
+    const CYLINDER_R = 310;
+    const RING_SPACING = 30;
+    const NUM_RINGS = 20;
+
+    const CHAR_MU = '無';
+    const CHAR_WO = '我';
+
+    let zOffset = 0;
+    let ctx;
+    let vignetteCanvas;
+
+    const MIN_SIZE = 4;
+    const MAX_SIZE = 22;
+
+    // Pre-rendered characters keyed by integer pixel size
+    // charBySize[size] = { mu: {canvas, w, h}, wo: {canvas, w, h} }
+    let charBySize = {};
+
+    function prerenderChar(ch, size) {
+      let c = document.createElement('canvas');
+      let pad = Math.ceil(size * 0.3);
+      c.width = Math.ceil(size + pad * 2);
+      c.height = Math.ceil(size + pad * 2);
+      let g = c.getContext('2d');
+      g.font = size + 'px sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillStyle = '#fff';
+      g.fillText(ch, c.width / 2, c.height / 2);
+      return { canvas: c, w: c.width, h: c.height };
+    }
+
+    function setup() {
+      const canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      ctx = canvas.elt.getContext('2d');
+
+      // Pre-render both characters at every integer pixel size
+      for (let s = MIN_SIZE; s <= MAX_SIZE; s++) {
+        charBySize[s] = {
+          mu: prerenderChar(CHAR_MU, s),
+          wo: prerenderChar(CHAR_WO, s)
+        };
+      }
+
+      // Pre-render vignette mask
+      vignetteCanvas = document.createElement('canvas');
+      vignetteCanvas.width = W;
+      vignetteCanvas.height = H;
+      let vctx = vignetteCanvas.getContext('2d');
+      vctx.fillStyle = '#000';
+      vctx.fillRect(0, 0, W, H);
+      vctx.globalCompositeOperation = 'destination-out';
+      vctx.beginPath();
+      vctx.arc(cx, cy, CYLINDER_R - 2, 0, Math.PI * 2);
+      vctx.fill();
+      vctx.globalCompositeOperation = 'source-over';
+    }
+
+    function draw() {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+
+      zOffset += 0.4;
+      let cycleOffset = zOffset % RING_SPACING;
+      let indexShift = Math.floor(zOffset / RING_SPACING);
+
+      for (let i = NUM_RINGS; i >= 0; i--) {
+        let z = i * RING_SPACING + cycleOffset;
+        let projR = CYLINDER_R * FOCAL / (FOCAL + z);
+
+        if (projR < 3) continue;
+
+        let isOdd = (i + indexShift) % 2 === 1;
+
+        let tSize = Math.round(MIN_SIZE + (MAX_SIZE - MIN_SIZE) * projR / CYLINDER_R);
+        if (tSize < MIN_SIZE) tSize = MIN_SIZE;
+        if (tSize > MAX_SIZE) tSize = MAX_SIZE;
+
+        let imgs = charBySize[tSize];
+        let img = isOdd ? imgs.mu : imgs.wo;
+        let halfW = img.w / 2;
+        let halfH = img.h / 2;
+
+        let bright = (240 - (240 - 15) * z / (NUM_RINGS * RING_SPACING)) / 255;
+        if (bright < 0) bright = 0;
+        ctx.globalAlpha = bright;
+
+        let numChars = Math.max(1, Math.floor(Math.PI * 2 * projR / (tSize * 1.1)));
+        let ringRotation = frameCount * 0.003 * (isOdd ? 1 : -1);
+
+        let angleStep = Math.PI * 2 / numChars;
+        for (let j = 0; j < numChars; j++) {
+          let angle = angleStep * j + ringRotation;
+          let x = cx + projR * Math.cos(angle);
+          let y = cy + projR * Math.sin(angle);
+
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.rotate(angle + Math.PI / 2);
+          ctx.drawImage(img.canvas, -halfW, -halfH);
+          ctx.restore();
+        }
+      }
+
+      ctx.globalAlpha = 1;
+      ctx.drawImage(vignetteCanvas, 0, 0);
+    }
+  </script>
+</SketchLayout>
