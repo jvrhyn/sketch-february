@@ -1,0 +1,194 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="columnar jointing"
+  day={14}
+  description="hover over the prisms"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const HEX_R = 22;
+    const R = HEX_R;
+    const BASE_HEIGHT = 30;
+    const MAX_EXTRA = 80;
+    const NOISE_SCALE = 0.06;
+    const TIME_SPEED = 0.004;
+
+    const TILT = 0.85;
+    const cosT = Math.cos(TILT);
+    const sinT = Math.sin(TILT);
+    const HOVER_RADIUS = 60;
+    const HOVER_BOOST = 120;
+    const RISE_SPEED = 0.15;
+    const FALL_SPEED = 0.04;
+
+    // Hex flat-top geometry
+    const HEX_W = Math.sqrt(3) * HEX_R;
+    const HEX_H = 2 * HEX_R;
+
+    // Precompute hex corner angles (flat-top)
+    const corners = [];
+    for (let i = 0; i < 6; i++) {
+      let a = Math.PI / 6 + i * Math.PI / 3;
+      corners.push({ x: Math.cos(a) * R, y: Math.sin(a) * R });
+    }
+
+    // Light direction (normalized)
+    const LIGHT = normalize3(0.4, -0.6, 0.7);
+
+    function normalize3(x, y, z) {
+      let l = Math.sqrt(x*x + y*y + z*z);
+      return { x: x/l, y: y/l, z: z/l };
+    }
+
+    function dot3(a, b) {
+      return a.x*b.x + a.y*b.y + a.z*b.z;
+    }
+
+    // Project 3D point (x, y_flat, z_up) to screen
+    function proj(x, yFlat, zUp) {
+      return {
+        sx: x,
+        sy: yFlat * cosT - zUp * sinT
+      };
+    }
+
+    let cells = [];
+
+    function setup() {
+      let canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      noStroke();
+
+      // Build hex grid - expand rows to compensate for projection compression
+      let cols = Math.ceil(W / HEX_W) + 4;
+      let rowStep = HEX_H * 0.75;
+      let projectedRowStep = rowStep * cosT;
+      let rows = Math.ceil(H / projectedRowStep) + 6;
+      let offX = W / 2 - (cols / 2) * HEX_W;
+      // Center grid so projected midpoint lands at canvas center
+      let gridWorldMidY = (rows / 2) * rowStep;
+      let offY = (H / 2 + BASE_HEIGHT * sinT) / cosT - gridWorldMidY;
+
+      for (let r = -2; r <= rows + 2; r++) {
+        for (let c = -2; c <= cols + 2; c++) {
+          let cx = offX + c * HEX_W + (r % 2 !== 0 ? HEX_W / 2 : 0);
+          let cy = offY + r * rowStep;
+          cells.push({ cx, cy, q: c, r: r });
+        }
+      }
+    }
+
+    function draw() {
+      background(255);
+
+      let t = frameCount * TIME_SPEED;
+
+      // Compute heights and sort back-to-front
+      let prisms = [];
+      for (let cell of cells) {
+        let n = noise(cell.cx * NOISE_SCALE, cell.cy * NOISE_SCALE, t);
+        n = n * n * n;
+
+        // Mouse proximity boost (compare in screen space)
+        let screenY = cell.cy * cosT - (BASE_HEIGHT + n * MAX_EXTRA) * sinT;
+        let dx = mouseX - cell.cx;
+        let dy = mouseY - screenY;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        let target = dist < HOVER_RADIUS ? HOVER_BOOST * (1 - dist / HOVER_RADIUS) : 0;
+
+        // Initialize boost if needed
+        if (cell.boost === undefined) cell.boost = 0;
+        if (target > cell.boost) {
+          cell.boost = lerp(cell.boost, target, RISE_SPEED);
+        } else {
+          cell.boost = lerp(cell.boost, target, FALL_SPEED);
+        }
+
+        let h = BASE_HEIGHT + n * MAX_EXTRA + cell.boost;
+        let sortY = cell.cy * cosT;
+        prisms.push({ ...cell, h, sortY });
+      }
+
+      // Sort: draw far ones first (lower screen y)
+      prisms.sort((a, b) => a.sortY - b.sortY);
+
+      for (let p of prisms) {
+        drawPrism(p.cx, p.cy, p.h);
+      }
+    }
+
+    function drawPrism(cx, cy, h) {
+      // Project top and bottom hex vertices
+      let topPts = [];
+      let botPts = [];
+      for (let i = 0; i < 6; i++) {
+        let wx = cx + corners[i].x;
+        let wy = cy + corners[i].y;
+        let top = proj(wx, wy, h);
+        let bot = proj(wx, wy, 0);
+        topPts.push(top);
+        botPts.push(bot);
+      }
+
+      // Draw visible side faces (the ones where bottom is below top)
+      for (let i = 0; i < 6; i++) {
+        let ni = (i + 1) % 6;
+
+        // Only draw side if it faces the viewer (bottom edge is lower on screen)
+        let midBotY = (botPts[i].sy + botPts[ni].sy) / 2;
+        let midTopY = (topPts[i].sy + topPts[ni].sy) / 2;
+        if (midBotY <= midTopY) continue;
+
+        // Compute face normal for shading
+        let edgeX = corners[ni].x - corners[i].x;
+        let edgeY = corners[ni].y - corners[i].y;
+        // Outward normal in flat plane (rotate edge 90 degrees)
+        let nx = -edgeY;
+        let ny = edgeX;
+        let nl = Math.sqrt(nx*nx + ny*ny);
+        nx /= nl; ny /= nl;
+
+        let faceNormal = { x: nx, y: ny * cosT, z: ny * sinT };
+        let fl = Math.sqrt(faceNormal.x**2 + faceNormal.y**2 + faceNormal.z**2);
+        faceNormal.x /= fl; faceNormal.y /= fl; faceNormal.z /= fl;
+
+        let d = dot3(faceNormal, LIGHT);
+        let brightness = map(d, -1, 1, 40, 160);
+
+        // Height-based hue shift
+        let hue = map(h, BASE_HEIGHT, BASE_HEIGHT + MAX_EXTRA, 200, 30);
+        let sat = map(h, BASE_HEIGHT, BASE_HEIGHT + MAX_EXTRA, 20, 60);
+
+        fill(color(`hsla(${hue}, ${sat}%, ${brightness / 2.55}%, 0.35)`));
+        stroke(0, 35);
+        strokeWeight(1.2);
+
+        beginShape();
+        vertex(topPts[i].sx, topPts[i].sy);
+        vertex(topPts[ni].sx, topPts[ni].sy);
+        vertex(botPts[ni].sx, botPts[ni].sy);
+        vertex(botPts[i].sx, botPts[i].sy);
+        endShape(CLOSE);
+      }
+
+      // Draw top face
+      let topNormal = { x: 0, y: -sinT, z: cosT };
+      let d = dot3(topNormal, LIGHT);
+      let brightness = map(d, -1, 1, 60, 220);
+      let hue = map(h, BASE_HEIGHT, BASE_HEIGHT + MAX_EXTRA, 200, 30);
+      let sat = map(h, BASE_HEIGHT, BASE_HEIGHT + MAX_EXTRA, 20, 60);
+
+      fill(color(`hsla(${hue}, ${sat}%, ${brightness / 2.55}%, 0.3)`));
+      stroke(0, 35);
+      strokeWeight(1.2);
+      beginShape();
+      for (let pt of topPts) vertex(pt.sx, pt.sy);
+      endShape(CLOSE);
+      noStroke();
+    }
+  </script>
+</SketchLayout>
