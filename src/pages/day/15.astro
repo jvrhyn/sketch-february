@@ -1,0 +1,245 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="shattering voxels"
+  day={15}
+  description="click to shatter the sphere — drag to orbit"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const VOXEL_SIZE = 16;
+    const SPHERE_RADIUS = 8;
+    const BLAST_RADIUS = 3.5;
+    const SCATTER_FRAMES = 60;
+    const REGROW_DELAY_MIN = 60;
+    const REGROW_DELAY_MAX = 180;
+    const REGROW_FRAMES = 40;
+
+    let voxels = [];
+
+    // Manual orbit camera
+    let camRotX = -0.45;
+    let camRotY = 0.65;
+    let isDragging = false;
+    let dragStartX, dragStartY;
+    let dragMoved = false;
+
+    function setup() {
+      let canvas = createCanvas(W, H, WEBGL);
+      canvas.parent('sketch-container');
+
+      // Build sphere of voxels
+      for (let i = -SPHERE_RADIUS; i <= SPHERE_RADIUS; i++) {
+        for (let j = -SPHERE_RADIUS; j <= SPHERE_RADIUS; j++) {
+          for (let k = -SPHERE_RADIUS; k <= SPHERE_RADIUS; k++) {
+            let d = Math.sqrt(i * i + j * j + k * k);
+            if (d <= SPHERE_RADIUS) {
+              voxels.push({
+                i, j, k,
+                x: i * VOXEL_SIZE,
+                y: j * VOXEL_SIZE,
+                z: k * VOXEL_SIZE,
+                state: 'solid',
+                scatterVx: 0, scatterVy: 0, scatterVz: 0,
+                scatterFrame: 0,
+                regrowDelay: 0,
+                regrowFrame: 0,
+                scatterX: 0, scatterY: 0, scatterZ: 0
+              });
+            }
+          }
+        }
+      }
+    }
+
+    function draw() {
+      background(255);
+      ortho(-W / 2, W / 2, -H / 2, H / 2, -2000, 2000);
+
+      // Manual orbit rotation
+      rotateX(camRotX);
+      camRotY += 0.003;
+      rotateY(camRotY);
+
+      // Lighting
+      ambientLight(150);
+      directionalLight(200, 200, 200, 0.5, 0.8, -0.5);
+      directionalLight(80, 80, 100, -0.5, -0.3, -0.8);
+
+      for (let v of voxels) {
+        push();
+
+        if (v.state === 'solid') {
+          translate(v.x, v.y, v.z);
+          fill(90);
+          noStroke();
+          box(VOXEL_SIZE);
+        } else if (v.state === 'scattering') {
+          // Draw wireframe outline at original position immediately
+          translate(v.x, v.y, v.z);
+          noFill();
+          stroke(220);
+          strokeWeight(0.5);
+          box(VOXEL_SIZE);
+
+          // Draw the scattering solid piece flying away
+          v.scatterFrame++;
+          let t = v.scatterFrame / SCATTER_FRAMES;
+          let ease = 1 - t * t;
+          v.scatterX += v.scatterVx * ease;
+          v.scatterY += v.scatterVy * ease;
+          v.scatterZ += v.scatterVz * ease;
+
+          // Offset from original position to scattered position
+          translate(v.scatterX, v.scatterY, v.scatterZ);
+
+          let s = 1 - t;
+          scale(s);
+          fill(50, 255 * (1 - t));
+          noStroke();
+          box(VOXEL_SIZE);
+
+          if (v.scatterFrame >= SCATTER_FRAMES) {
+            v.state = 'outline';
+            v.regrowDelay = Math.floor(
+              random(REGROW_DELAY_MIN, REGROW_DELAY_MAX)
+            );
+            v.regrowFrame = 0;
+            v.scatterX = 0;
+            v.scatterY = 0;
+            v.scatterZ = 0;
+          }
+        } else if (v.state === 'outline') {
+          translate(v.x, v.y, v.z);
+          v.regrowDelay--;
+          noFill();
+          stroke(220);
+          strokeWeight(0.5);
+          box(VOXEL_SIZE);
+          if (v.regrowDelay <= 0) {
+            v.state = 'regrowing';
+            v.regrowFrame = 0;
+          }
+        } else if (v.state === 'regrowing') {
+          translate(v.x, v.y, v.z);
+          v.regrowFrame++;
+          let t = v.regrowFrame / REGROW_FRAMES;
+          let s = t * t * (3 - 2 * t);
+
+          if (t < 0.5) {
+            noFill();
+            stroke(lerp(220, 90, t * 2));
+            strokeWeight(lerp(0.5, 1, t * 2));
+            box(VOXEL_SIZE * s);
+          } else {
+            fill(50, 255 * (t - 0.5) * 2);
+            stroke(90);
+            strokeWeight(0.5);
+            box(VOXEL_SIZE * s);
+          }
+
+          if (v.regrowFrame >= REGROW_FRAMES) {
+            v.state = 'solid';
+          }
+        }
+
+        pop();
+      }
+    }
+
+    function mousePressed() {
+      if (mouseX < 0 || mouseX > W || mouseY < 0 || mouseY > H) return;
+      isDragging = true;
+      dragMoved = false;
+      dragStartX = mouseX;
+      dragStartY = mouseY;
+    }
+
+    function mouseDragged() {
+      if (!isDragging) return;
+      let dx = mouseX - pmouseX;
+      let dy = mouseY - pmouseY;
+      if (Math.abs(mouseX - dragStartX) > 3 || Math.abs(mouseY - dragStartY) > 3) {
+        dragMoved = true;
+      }
+      camRotY += dx * 0.01;
+      camRotX += dy * 0.01;
+      camRotX = constrain(camRotX, -HALF_PI, HALF_PI);
+    }
+
+    function mouseReleased() {
+      if (!isDragging) return;
+      isDragging = false;
+
+      // If mouse barely moved, treat as a click → shatter
+      if (!dragMoved) {
+        handleClick(mouseX, mouseY);
+      }
+    }
+
+    function handleClick(mx, my) {
+      // Projectile is a ray that passes straight through the sphere.
+      // Scatter all solid voxels whose screen projection is within
+      // BLAST_RADIUS (in screen pixels) of the click point.
+      let cx = Math.cos(camRotX), sx = Math.sin(camRotX);
+      let cy = Math.cos(camRotY), sy = Math.sin(camRotY);
+
+      let hitAny = false;
+      for (let v of voxels) {
+        if (v.state !== 'solid') continue;
+
+        // Apply rotateY then rotateX (matching draw order)
+        let x1 = v.x * cy + v.z * sy;
+        let z1 = -v.x * sy + v.z * cy;
+        let y1 = v.y;
+        let y2 = y1 * cx - z1 * sx;
+
+        // Ortho projection: screen coords offset to canvas top-left
+        let screenPx = x1 + W / 2;
+        let screenPy = y2 + H / 2;
+
+        let d = dist(mx, my, screenPx, screenPy);
+        let blastScreenR = BLAST_RADIUS * VOXEL_SIZE;
+        if (d < blastScreenR) {
+          hitAny = true;
+          v.state = 'scattering';
+          v.scatterFrame = 0;
+          v.scatterX = 0;
+          v.scatterY = 0;
+          v.scatterZ = 0;
+
+          // Scatter radially outward from the ray axis (in world space)
+          // Ray direction in world space is the camera's -Z after inverse rotation
+          let rayDirX = -(sy * cx);  // not needed for radial — scatter perpendicular
+          let rayDirY = sx;
+          let rayDirZ = -(cy * cx);
+
+          // Project voxel position onto ray to get perpendicular component
+          let dot = v.x * rayDirX + v.y * rayDirY + v.z * rayDirZ;
+          let perpX = v.x - dot * rayDirX;
+          let perpY = v.y - dot * rayDirY;
+          let perpZ = v.z - dot * rayDirZ;
+          let perpLen = Math.sqrt(perpX * perpX + perpY * perpY + perpZ * perpZ);
+
+          let speed = map(d, 0, blastScreenR, 4, 1.5);
+          if (perpLen < 0.01) {
+            // On the ray axis — random perpendicular direction
+            let theta = random(TWO_PI);
+            let phi = random(PI);
+            v.scatterVx = sin(phi) * cos(theta) * speed;
+            v.scatterVy = sin(phi) * sin(theta) * speed;
+            v.scatterVz = cos(phi) * speed;
+          } else {
+            // Scatter outward from ray axis
+            v.scatterVx = (perpX / perpLen) * speed + random(-0.5, 0.5);
+            v.scatterVy = (perpY / perpLen) * speed + random(-0.5, 0.5);
+            v.scatterVz = (perpZ / perpLen) * speed + random(-0.5, 0.5);
+          }
+        }
+      }
+    }
+  </script>
+</SketchLayout>
