@@ -1,0 +1,830 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="navigating mazes"
+  day={16}
+  description="solve 12 pentagonal mazes — click cells to move"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+
+    const SOLVING = 0, TRANSITIONING = 1, COMPLETE = 2;
+    let state = SOLVING;
+    let faceIndex = 0;
+    let solvedFaces = new Set();
+    let transFrame = 0;
+    const TRANS_FRAMES = 60;
+
+    let allMazes = [];   // pre-calculated maze per faceOrder slot
+    let cells = [];
+    let wallSegs = {};
+    let startId = -1;
+    let endId = -1;
+    let path = [];
+    let hoverCell = -1;
+
+    const NUM_RINGS = 3;
+    const SCALE = 210;
+
+    // ── Quaternion helpers ──
+
+    function quatFromAxisAngle(ax, ay, az, angle) {
+      let s = Math.sin(angle / 2);
+      let c = Math.cos(angle / 2);
+      return [ax * s, ay * s, az * s, c];
+    }
+
+    function quatMultiply(a, b) {
+      return [
+        a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1],
+        a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0],
+        a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3],
+        a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2]
+      ];
+    }
+
+    function quatNormalize(q) {
+      let len = Math.sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+      if (len < 1e-10) return [0, 0, 0, 1];
+      return [q[0]/len, q[1]/len, q[2]/len, q[3]/len];
+    }
+
+    function quatSlerp(a, b, t) {
+      let dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+      if (dot < 0) { b = [-b[0], -b[1], -b[2], -b[3]]; dot = -dot; }
+      if (dot > 0.9995) {
+        let r = [a[0] + t*(b[0]-a[0]), a[1] + t*(b[1]-a[1]),
+                 a[2] + t*(b[2]-a[2]), a[3] + t*(b[3]-a[3])];
+        return quatNormalize(r);
+      }
+      let theta = Math.acos(Math.min(1, dot));
+      let sinT = Math.sin(theta);
+      let sa = Math.sin((1 - t) * theta) / sinT;
+      let sb = Math.sin(t * theta) / sinT;
+      return quatNormalize([
+        sa*a[0] + sb*b[0], sa*a[1] + sb*b[1],
+        sa*a[2] + sb*b[2], sa*a[3] + sb*b[3]
+      ]);
+    }
+
+    function quatToMatrix(q) {
+      let [x, y, z, w] = q;
+      return [
+        1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w),   0,
+        2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w),   0,
+        2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y), 0,
+        0, 0, 0, 1
+      ];
+    }
+
+    function applyQuat(q, v) {
+      let [qx, qy, qz, qw] = q;
+      let cx = qy*v[2] - qz*v[1];
+      let cy = qz*v[0] - qx*v[2];
+      let cz = qx*v[1] - qy*v[0];
+      return [
+        v[0] + 2*(qw*cx + qy*cz - qz*cy),
+        v[1] + 2*(qw*cy + qz*cx - qx*cz),
+        v[2] + 2*(qw*cz + qx*cy - qy*cx)
+      ];
+    }
+
+    function quatFromTo(from, to) {
+      let fx = from[0], fy = from[1], fz = from[2];
+      let tx = to[0], ty = to[1], tz = to[2];
+      let dot = fx*tx + fy*ty + fz*tz;
+      if (dot > 0.9999) return [0, 0, 0, 1];
+      if (dot < -0.9999) {
+        let ax = [1, 0, 0];
+        if (Math.abs(fx) > 0.9) ax = [0, 1, 0];
+        let cx = fy*ax[2] - fz*ax[1];
+        let cy = fz*ax[0] - fx*ax[2];
+        let cz = fx*ax[1] - fy*ax[0];
+        let cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
+        return quatNormalize([cx/cl, cy/cl, cz/cl, 0]);
+      }
+      let cx = fy*tz - fz*ty;
+      let cy = fz*tx - fx*tz;
+      let cz = fx*ty - fy*tx;
+      let w = 1 + dot;
+      return quatNormalize([cx, cy, cz, w]);
+    }
+
+    // ── Dodecahedron geometry ──
+
+    let dodecFaces = [];
+    let currentQuat = [0, 0, 0, 1];
+    let targetQuat = [0, 0, 0, 1];
+    let transStartQuat = [0, 0, 0, 1];
+    let faceOrder = [];
+
+    function buildDodecahedron() {
+      let phi = (1 + Math.sqrt(5)) / 2;
+
+      // 12 icosahedron vertices
+      let icoVerts = [];
+      for (let s1 of [-1, 1]) {
+        for (let s2 of [-1, 1]) {
+          icoVerts.push([0, s1, s2 * phi]);
+          icoVerts.push([s1, s2 * phi, 0]);
+          icoVerts.push([s2 * phi, 0, s1]);
+        }
+      }
+
+      for (let i = 0; i < icoVerts.length; i++) {
+        let [x, y, z] = icoVerts[i];
+        let l = Math.sqrt(x*x + y*y + z*z);
+        icoVerts[i] = [x/l, y/l, z/l];
+      }
+
+      // 20 icosahedron faces
+      let icoFaces = [];
+      let edgeLen = 2 / Math.sqrt(1 + phi * phi);
+      for (let i = 0; i < 12; i++) {
+        for (let j = i + 1; j < 12; j++) {
+          let dx = icoVerts[i][0] - icoVerts[j][0];
+          let dy = icoVerts[i][1] - icoVerts[j][1];
+          let dz = icoVerts[i][2] - icoVerts[j][2];
+          let d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+          if (d < edgeLen * 1.1) {
+            for (let k = j + 1; k < 12; k++) {
+              let d1 = Math.sqrt(
+                (icoVerts[i][0]-icoVerts[k][0])**2 +
+                (icoVerts[i][1]-icoVerts[k][1])**2 +
+                (icoVerts[i][2]-icoVerts[k][2])**2
+              );
+              let d2 = Math.sqrt(
+                (icoVerts[j][0]-icoVerts[k][0])**2 +
+                (icoVerts[j][1]-icoVerts[k][1])**2 +
+                (icoVerts[j][2]-icoVerts[k][2])**2
+              );
+              if (d1 < edgeLen * 1.1 && d2 < edgeLen * 1.1) {
+                icoFaces.push([i, j, k]);
+              }
+            }
+          }
+        }
+      }
+
+      // Dodecahedron vertices = centroids of icosahedron faces
+      let dodecVerts = icoFaces.map(f => {
+        let x = (icoVerts[f[0]][0] + icoVerts[f[1]][0] + icoVerts[f[2]][0]) / 3;
+        let y = (icoVerts[f[0]][1] + icoVerts[f[1]][1] + icoVerts[f[2]][1]) / 3;
+        let z = (icoVerts[f[0]][2] + icoVerts[f[1]][2] + icoVerts[f[2]][2]) / 3;
+        let l = Math.sqrt(x*x + y*y + z*z);
+        return [x/l, y/l, z/l];
+      });
+
+      // Dodecahedron faces: for each icosahedron vertex,
+      // the ring of 5 surrounding face-centroids
+      dodecFaces = [];
+      for (let iv = 0; iv < 12; iv++) {
+        let surrounding = [];
+        for (let fi = 0; fi < 20; fi++) {
+          if (icoFaces[fi].indexOf(iv) >= 0) {
+            surrounding.push(fi);
+          }
+        }
+
+        let normal = icoVerts[iv];
+        let up = [0, 1, 0];
+        if (Math.abs(normal[1]) > 0.9) up = [1, 0, 0];
+        let uAxis = cross(up, normal);
+        let uLen = vecLen(uAxis);
+        uAxis = [uAxis[0]/uLen, uAxis[1]/uLen, uAxis[2]/uLen];
+        let vAxis = cross(normal, uAxis);
+
+        surrounding.sort((a, b) => {
+          let da = vecSub(dodecVerts[a], normal);
+          let db = vecSub(dodecVerts[b], normal);
+          let angA = Math.atan2(vecDot(da, vAxis), vecDot(da, uAxis));
+          let angB = Math.atan2(vecDot(db, vAxis), vecDot(db, uAxis));
+          return angA - angB;
+        });
+
+        let faceVerts3D = surrounding.map(i => [
+          dodecVerts[i][0] * SCALE,
+          dodecVerts[i][1] * SCALE,
+          dodecVerts[i][2] * SCALE
+        ]);
+
+        // Use actual face centroid (on the face plane) instead of icosahedron vertex (on the sphere)
+        let center = [0, 0, 0];
+        for (let v of faceVerts3D) {
+          center[0] += v[0]; center[1] += v[1]; center[2] += v[2];
+        }
+        center[0] /= 5; center[1] /= 5; center[2] /= 5;
+        let nrm = [...icoVerts[iv]];
+
+        let fUp = [0, 1, 0];
+        if (Math.abs(nrm[1]) > 0.9) fUp = [1, 0, 0];
+        let fU = cross(fUp, nrm);
+        let fULen = vecLen(fU);
+        fU = [fU[0]/fULen, fU[1]/fULen, fU[2]/fULen];
+        let fV = cross(nrm, fU);
+
+        // Align fU,fV so first face vertex is at angle -PI/2 (matching pentPoint2D)
+        let fDiff = vecSub(faceVerts3D[0], center);
+        let fAngle = Math.atan2(vecDot(fDiff, fV), vecDot(fDiff, fU));
+        let fRot = -Math.PI / 2 - fAngle;
+        let cosR = Math.cos(fRot), sinR = Math.sin(fRot);
+        let newFU = vecAdd(vecScale(fU, cosR), vecScale(fV, -sinR));
+        let newFV = vecAdd(vecScale(fU, sinR), vecScale(fV, cosR));
+        fU = newFU;
+        fV = newFV;
+
+        dodecFaces.push({
+          verts3D: faceVerts3D,
+          center: center,
+          normal: nrm,
+          uAxis: fU,
+          vAxis: fV
+        });
+      }
+
+      // Visit order: start with face closest to +Z, then nearest neighbor
+      faceOrder = [];
+      let used = new Set();
+      let bestIdx = 0;
+      let bestDot = -Infinity;
+      for (let i = 0; i < 12; i++) {
+        let d = dodecFaces[i].normal[2];
+        if (d > bestDot) { bestDot = d; bestIdx = i; }
+      }
+      faceOrder.push(bestIdx);
+      used.add(bestIdx);
+
+      while (faceOrder.length < 12) {
+        let last = faceOrder[faceOrder.length - 1];
+        let lastN = dodecFaces[last].normal;
+        let bestD = -Infinity;
+        let bestF = -1;
+        for (let i = 0; i < 12; i++) {
+          if (used.has(i)) continue;
+          let d = vecDot(lastN, dodecFaces[i].normal);
+          if (d > bestD) { bestD = d; bestF = i; }
+        }
+        faceOrder.push(bestF);
+        used.add(bestF);
+      }
+    }
+
+    function cross(a, b) {
+      return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+    }
+    function vecDot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+    function vecSub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+    function vecLen(a) { return Math.sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]); }
+    function vecScale(a, s) { return [a[0]*s, a[1]*s, a[2]*s]; }
+    function vecAdd(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+
+    // Compute target quaternion for a face: rotate face normal to +Z (toward camera)
+    function computeFaceQuat(fi) {
+      let face = dodecFaces[fi];
+      let q1 = quatFromTo(face.normal, [0, 0, 1]);
+
+      // Rotate around Z to make face upright on screen
+      // In p5 WEBGL, Y points down, so "up" on screen is (0, -1, 0)
+      let rotatedV = applyQuat(q1, face.vAxis);
+      let angle = Math.atan2(rotatedV[0], rotatedV[1]);
+      let q2 = quatFromAxisAngle(0, 0, 1, -angle);
+
+      return quatMultiply(q2, q1);
+    }
+
+    // ── Face-local 2D maze ──
+
+    // Pre-compute 2D vertex positions for each face
+    let faceVerts2D = []; // faceVerts2D[fi] = [{u,v}, ...]
+
+    function precomputeFaceVerts2D() {
+      faceVerts2D = [];
+      for (let fi = 0; fi < 12; fi++) {
+        let face = dodecFaces[fi];
+        let verts = [];
+        for (let i = 0; i < 5; i++) {
+          let diff = vecSub(face.verts3D[i], face.center);
+          verts.push({
+            u: vecDot(diff, face.uAxis),
+            v: vecDot(diff, face.vAxis)
+          });
+        }
+        faceVerts2D.push(verts);
+      }
+    }
+
+    // Point on face perimeter at parameter t (0–1), scaled toward center
+    function facePoint2D(fi, scale, t) {
+      let verts = faceVerts2D[fi];
+      t = ((t % 1) + 1) % 1;
+      let si = Math.min(Math.floor(t * 5), 4);
+      let f = t * 5 - si;
+      let va = verts[si], vb = verts[(si + 1) % 5];
+      return {
+        u: (va.u + (vb.u - va.u) * f) * scale,
+        v: (va.v + (vb.v - va.v) * f) * scale
+      };
+    }
+
+    function getCellId(ring, idx) {
+      if (ring === 0) return 0;
+      let base = 1;
+      for (let r = 1; r < ring; r++) base += 5 * r;
+      return base + idx;
+    }
+
+    function localToWorld(face, u, v) {
+      return vecAdd(face.center, vecAdd(vecScale(face.uAxis, u), vecScale(face.vAxis, v)));
+    }
+
+    // Find which side (0-4) of face fi1's pentagon is shared with fi2
+    function findSharedSide(fi1, fi2) {
+      let v1 = dodecFaces[fi1].verts3D;
+      let v2 = dodecFaces[fi2].verts3D;
+      for (let s = 0; s < 5; s++) {
+        let va = v1[s], vb = v1[(s + 1) % 5];
+        let foundA = false, foundB = false;
+        for (let j = 0; j < 5; j++) {
+          if (vecLen(vecSub(va, v2[j])) < 1.0) foundA = true;
+          if (vecLen(vecSub(vb, v2[j])) < 1.0) foundB = true;
+        }
+        if (foundA && foundB) return s;
+      }
+      return -1;
+    }
+
+    function buildMazeForFace(fi, startSide, endSide) {
+      let radii = [0.26, 0.52, 0.78, 1.0];
+
+      let mCells = [];
+      let mWallSegs = {};
+
+      // Center cell
+      let cv = [];
+      for (let i = 0; i < 5; i++) {
+        cv.push(facePoint2D(fi, radii[0], i / 5));
+      }
+      let cu = 0, cvv = 0;
+      for (let p of cv) { cu += p.u; cvv += p.v; }
+      mCells.push({
+        id: 0, ring: 0, idx: 0,
+        verts: cv, cu: cu / cv.length, cv: cvv / cv.length,
+        neighbors: [], walls: new Set()
+      });
+
+      // Ring cells
+      for (let ring = 1; ring <= NUM_RINGS; ring++) {
+        let rI = radii[ring - 1];
+        let rO = radii[ring];
+        let n = 5 * ring;
+        for (let i = 0; i < n; i++) {
+          let t1 = i / n, t2 = (i + 1) / n;
+          let v1 = facePoint2D(fi, rI, t1);
+          let v2 = facePoint2D(fi, rI, t2);
+          let v3 = facePoint2D(fi, rO, t2);
+          let v4 = facePoint2D(fi, rO, t1);
+          mCells.push({
+            id: mCells.length, ring: ring, idx: i,
+            verts: [v1, v2, v3, v4],
+            cu: (v1.u + v2.u + v3.u + v4.u) / 4,
+            cv: (v1.v + v2.v + v3.v + v4.v) / 4,
+            neighbors: [], walls: new Set(),
+            t1: t1, t2: t2
+          });
+        }
+      }
+
+      // Adjacency
+      function addAdj(id1, id2, seg) {
+        mCells[id1].neighbors.push(id2);
+        mCells[id2].neighbors.push(id1);
+        mCells[id1].walls.add(id2);
+        mCells[id2].walls.add(id1);
+        let a = Math.min(id1, id2), b = Math.max(id1, id2);
+        mWallSegs[a + ',' + b] = seg;
+      }
+
+      for (let i = 0; i < 5; i++) {
+        let p1 = facePoint2D(fi, radii[0], i / 5);
+        let p2 = facePoint2D(fi, radii[0], (i + 1) / 5);
+        addAdj(0, getCellId(1, i), { u1: p1.u, v1: p1.v, u2: p2.u, v2: p2.v });
+      }
+
+      for (let ring = 1; ring <= NUM_RINGS; ring++) {
+        let n = 5 * ring;
+        let rI = radii[ring - 1];
+        let rO = radii[ring];
+        for (let i = 0; i < n; i++) {
+          let next = (i + 1) % n;
+          let t = (i + 1) / n;
+          let p1 = facePoint2D(fi, rI, t);
+          let p2 = facePoint2D(fi, rO, t);
+          addAdj(getCellId(ring, i), getCellId(ring, next), { u1: p1.u, v1: p1.v, u2: p2.u, v2: p2.v });
+        }
+      }
+
+      for (let ring = 1; ring < NUM_RINGS; ring++) {
+        let nI = 5 * ring;
+        let nO = 5 * (ring + 1);
+        let bR = radii[ring];
+        for (let i = 0; i < nI; i++) {
+          let t1i = i / nI, t2i = (i + 1) / nI;
+          for (let j = 0; j < nO; j++) {
+            let t1o = j / nO, t2o = (j + 1) / nO;
+            if (t1o < t2i - 0.001 && t2o > t1i + 0.001) {
+              let tS = Math.max(t1i, t1o), tE = Math.min(t2i, t2o);
+              let p1 = facePoint2D(fi, bR, tS);
+              let p2 = facePoint2D(fi, bR, tE);
+              addAdj(getCellId(ring, i), getCellId(ring + 1, j), { u1: p1.u, v1: p1.v, u2: p2.u, v2: p2.v });
+            }
+          }
+        }
+      }
+
+      // Recursive backtracker
+      let visited = new Set();
+      let stack = [];
+      let seed = Math.floor(random(mCells.length));
+      visited.add(seed);
+      stack.push(seed);
+      while (stack.length > 0) {
+        let cur = stack[stack.length - 1];
+        let unvis = mCells[cur].neighbors.filter(n => !visited.has(n));
+        if (unvis.length > 0) {
+          let next = unvis[Math.floor(random(unvis.length))];
+          mCells[cur].walls.delete(next);
+          mCells[next].walls.delete(cur);
+          visited.add(next);
+          stack.push(next);
+        } else {
+          stack.pop();
+        }
+      }
+
+      // Remove ~25% walls
+      let wl = [];
+      for (let c of mCells) {
+        for (let n of c.walls) {
+          if (n > c.id) wl.push([c.id, n]);
+        }
+      }
+      let rem = Math.floor(wl.length * 0.25);
+      for (let k = 0; k < rem; k++) {
+        let idx = Math.floor(random(wl.length));
+        let pair = wl[idx];
+        mCells[pair[0]].walls.delete(pair[1]);
+        mCells[pair[1]].walls.delete(pair[0]);
+        wl.splice(idx, 1);
+      }
+
+      // Pick start & end cells on specified sides of outer ring
+      let outerN = 5 * NUM_RINGS;
+      let cellsPerSide = outerN / 5;
+      let sIdx = startSide * cellsPerSide + Math.floor(cellsPerSide / 2);
+      let eIdx = endSide * cellsPerSide + Math.floor(cellsPerSide / 2);
+
+      return {
+        cells: mCells,
+        wallSegs: mWallSegs,
+        startId: getCellId(NUM_RINGS, sIdx),
+        endId: getCellId(NUM_RINGS, eIdx)
+      };
+    }
+
+    function buildAllMazes() {
+      allMazes = [];
+      let startSides = [];
+      let endSides = [];
+
+      // First face: pick a random start side
+      startSides[0] = Math.floor(random(5));
+
+      for (let k = 0; k < 12; k++) {
+        let fi = faceOrder[k];
+        if (k < 11) {
+          let nextFi = faceOrder[k + 1];
+          let side = findSharedSide(fi, nextFi);
+          endSides[k] = side >= 0 ? side : ((startSides[k] + 2) % 5);
+          let nextSide = findSharedSide(nextFi, fi);
+          startSides[k + 1] = nextSide >= 0 ? nextSide : Math.floor(random(5));
+        } else {
+          endSides[k] = (startSides[k] + 2) % 5;
+        }
+
+        allMazes.push(buildMazeForFace(fi, startSides[k], endSides[k]));
+      }
+
+      loadMaze(0);
+    }
+
+    function loadMaze(orderIdx) {
+      let maze = allMazes[orderIdx];
+      cells = maze.cells;
+      wallSegs = maze.wallSegs;
+      startId = maze.startId;
+      endId = maze.endId;
+      path = [startId];
+      hoverCell = -1;
+    }
+
+    // ── Screen projection (p5 WEBGL: Y is down, camera looks down -Z) ──
+
+    function projectToScreen(worldPt) {
+      let r = applyQuat(currentQuat, worldPt);
+      // In p5 WEBGL with ortho(-W/2, W/2, -H/2, H/2), world (0,0) = screen center
+      // mouseX/mouseY are canvas-relative: (0,0) = top-left, (W,H) = bottom-right
+      // world +X = screen right, world +Y = screen down (p5 convention)
+      return { x: W / 2 + r[0], y: H / 2 + r[1], z: r[2] };
+    }
+
+    function pointInPoly2D(px, py, verts) {
+      let inside = false;
+      for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+        let vi = verts[i], vj = verts[j];
+        if ((vi.y > py) !== (vj.y > py) &&
+            px < (vj.x - vi.x) * (py - vi.y) / (vj.y - vi.y) + vi.x) {
+          inside = !inside;
+        }
+      }
+      return inside;
+    }
+
+    function cellUnderMouse() {
+      if (state !== SOLVING) return -1;
+      let fi = faceOrder[faceIndex];
+      let face = dodecFaces[fi];
+      for (let c of cells) {
+        let screenVerts = c.verts.map(v => {
+          let w = localToWorld(face, v.u, v.v);
+          return projectToScreen(w);
+        });
+        if (pointInPoly2D(mouseX, mouseY, screenVerts)) return c.id;
+      }
+      return -1;
+    }
+
+    function isValidMove(fromId, toId) {
+      let c = cells[fromId];
+      return c.neighbors.indexOf(toId) >= 0 && !c.walls.has(toId);
+    }
+
+    // ── Greyscale palette ──
+    // face brightness by index (varying grey tones so faces are distinguishable)
+    function faceBright(fi) {
+      return 65 + (fi * 7) % 20; // range 65–83
+    }
+
+    // ── Drawing ──
+
+    function drawFace3D(fi, mazeData, isCurrent) {
+      let face = dodecFaces[fi];
+
+      // Cell fills
+      for (let c of mazeData.cells) {
+        let isEnd = c.id === mazeData.endId;
+
+        if (isCurrent) {
+          let inPath = path.indexOf(c.id) >= 0;
+          let isHov = c.id === hoverCell;
+          if (isEnd) fill(0, 0, 30);
+          else if (inPath) fill(0, 0, 85);
+          else if (isHov) fill(0, 0, 92);
+          else fill(0, 0, 100);
+        } else {
+          fill(0, 0, faceBright(fi));
+        }
+
+        stroke(0, 0, isCurrent ? 78 : 70);
+        strokeWeight(0.5);
+        beginShape();
+        for (let v of c.verts) {
+          let w = localToWorld(face, v.u, v.v);
+          vertex(w[0], w[1], w[2]);
+        }
+        endShape(CLOSE);
+      }
+
+      // Maze walls
+      stroke(0, 0, isCurrent ? 25 : 50);
+      strokeWeight(isCurrent ? 3 : 1.5);
+      for (let c of mazeData.cells) {
+        for (let n of c.walls) {
+          if (n > c.id) {
+            let key = c.id + ',' + n;
+            let seg = mazeData.wallSegs[key];
+            if (seg) {
+              let w1 = localToWorld(face, seg.u1, seg.v1);
+              let w2 = localToWorld(face, seg.u2, seg.v2);
+              line(w1[0], w1[1], w1[2], w2[0], w2[1], w2[2]);
+            }
+          }
+        }
+      }
+
+      if (isCurrent) {
+        // Path line
+        if (path.length > 1) {
+          stroke(0, 0, 45);
+          strokeWeight(4);
+          for (let i = 0; i < path.length - 1; i++) {
+            let w1 = localToWorld(face, cells[path[i]].cu, cells[path[i]].cv);
+            let w2 = localToWorld(face, cells[path[i+1]].cu, cells[path[i+1]].cv);
+            line(w1[0], w1[1], w1[2], w2[0], w2[1], w2[2]);
+          }
+        }
+
+        // Player dot
+        if (path.length > 0) {
+          let head = cells[path[path.length - 1]];
+          let w = localToWorld(face, head.cu, head.cv);
+          push();
+          translate(w[0], w[1], w[2]);
+          fill(0, 0, 15);
+          noStroke();
+          sphere(4);
+          pop();
+        }
+
+        // End marker
+        {
+          let w = localToWorld(face, cells[endId].cu, cells[endId].cv);
+          push();
+          translate(w[0], w[1], w[2]);
+          fill(0, 0, 15);
+          noStroke();
+          sphere(5);
+          pop();
+        }
+      }
+
+      // Pentagon border
+      noFill();
+      stroke(0, 0, isCurrent ? 40 : 55);
+      strokeWeight(isCurrent ? 3 : 1.5);
+      beginShape();
+      for (let v of face.verts3D) {
+        vertex(v[0], v[1], v[2]);
+      }
+      endShape(CLOSE);
+    }
+
+    // ── p5 ──
+
+    function setup() {
+      let canvas = createCanvas(W, H, WEBGL);
+      canvas.parent('sketch-container');
+      colorMode(HSB, 360, 100, 100, 100);
+      textFont('Helvetica');
+
+      buildDodecahedron();
+      precomputeFaceVerts2D();
+      buildAllMazes();
+      let firstFace = faceOrder[0];
+      currentQuat = computeFaceQuat(firstFace);
+      targetQuat = [...currentQuat];
+      transStartQuat = [...currentQuat];
+    }
+
+    function draw() {
+      background(0, 0, 97);
+      ortho(-W / 2, W / 2, -H / 2, H / 2, -2000, 2000);
+
+      if (state === TRANSITIONING) {
+        transFrame++;
+        let t = transFrame / TRANS_FRAMES;
+        let eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        currentQuat = quatSlerp(transStartQuat, targetQuat, eased);
+        if (transFrame >= TRANS_FRAMES) {
+          currentQuat = [...targetQuat];
+          state = SOLVING;
+        }
+      }
+
+      // Lighting (grayscale: hue=0, sat=0 in HSB mode)
+      ambientLight(0, 0, 100);
+
+      // Apply rotation
+      let mat = quatToMatrix(currentQuat);
+      applyMatrix(
+        mat[0], mat[4], mat[8], mat[12],
+        mat[1], mat[5], mat[9], mat[13],
+        mat[2], mat[6], mat[10], mat[14],
+        mat[3], mat[7], mat[11], mat[15]
+      );
+
+      // Determine hover
+      if (state === SOLVING) {
+        hoverCell = -1;
+        let mc = cellUnderMouse();
+        if (mc >= 0 && path.length > 0) {
+          let head = path[path.length - 1];
+          if (isValidMove(head, mc) && path.indexOf(mc) < 0) {
+            hoverCell = mc;
+          } else if (path.indexOf(mc) >= 0 && path.indexOf(mc) < path.length - 1) {
+            hoverCell = mc;
+          }
+        }
+        cursor(hoverCell >= 0 ? HAND : ARROW);
+      }
+
+      let currentFi = faceOrder[faceIndex];
+
+      // Sort faces by depth (back to front)
+      let faceDepths = [];
+      for (let i = 0; i < 12; i++) {
+        let c = dodecFaces[i].center;
+        let rc = applyQuat(currentQuat, c);
+        faceDepths.push({ fi: i, z: rc[2] });
+      }
+      faceDepths.sort((a, b) => a.z - b.z);
+
+      for (let fd of faceDepths) {
+        let fi = fd.fi;
+        if (solvedFaces.has(fi)) continue;
+        let orderIdx = faceOrder.indexOf(fi);
+        let mazeData = allMazes[orderIdx];
+        if (fi === currentFi && state === SOLVING) {
+          drawFace3D(fi, mazeData, true);
+        } else {
+          drawFace3D(fi, mazeData, false);
+        }
+      }
+
+      // HUD overlay
+      resetMatrix();
+      ortho(-W / 2, W / 2, -H / 2, H / 2, -2000, 2000);
+      noLights();
+      ambientLight(0, 0, 100);
+
+      if (state === COMPLETE) {
+        fill(0, 0, 30);
+        noStroke();
+        textSize(28);
+        textAlign(CENTER, CENTER);
+        text('all 12 faces solved!', 0, -20);
+        textSize(14);
+        fill(0, 0, 55);
+        text('click to restart', 0, 20);
+      } else {
+        fill(0, 0, 30);
+        noStroke();
+        textSize(16);
+        textAlign(LEFT, TOP);
+        text(solvedFaces.size + ' / 12', -W / 2 + 20, -H / 2 + 20);
+      }
+    }
+
+    function mousePressed() {
+      if (mouseX < 0 || mouseX > W || mouseY < 0 || mouseY > H) return;
+
+      if (state === COMPLETE) {
+        faceIndex = 0;
+        solvedFaces = new Set();
+        state = SOLVING;
+        buildAllMazes();
+        let fi = faceOrder[0];
+        currentQuat = computeFaceQuat(fi);
+        targetQuat = [...currentQuat];
+        transStartQuat = [...currentQuat];
+        return;
+      }
+      if (state !== SOLVING) return;
+
+      let mc = cellUnderMouse();
+      if (mc < 0) return;
+
+      let head = path[path.length - 1];
+
+      // Backtrack
+      let pi = path.indexOf(mc);
+      if (pi >= 0 && pi < path.length - 1) {
+        path = path.slice(0, pi + 1);
+        return;
+      }
+
+      // Move forward
+      if (isValidMove(head, mc) && path.indexOf(mc) < 0) {
+        path.push(mc);
+
+        if (mc === endId) {
+          let fi = faceOrder[faceIndex];
+          solvedFaces.add(fi);
+          faceIndex++;
+          if (faceIndex >= 12) {
+            state = COMPLETE;
+          } else {
+            state = TRANSITIONING;
+            transFrame = 0;
+            transStartQuat = [...currentQuat];
+            let nextFi = faceOrder[faceIndex];
+            targetQuat = computeFaceQuat(nextFi);
+            loadMaze(faceIndex);
+          }
+        }
+      }
+    }
+  </script>
+</SketchLayout>
