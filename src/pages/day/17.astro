@@ -1,0 +1,325 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="fireworks"
+  day={17}
+  description="click to launch fireworks — bursts warp and bridge toward each other"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const N = 12; // dodecagon sides
+    const BRIDGE_DIST = 80; // max distance for vertex bridging
+    const GRAVITY_RANGE = 250; // range of gravitational pull
+    const GRAVITY_STRENGTH = 0.15;
+
+    let bursts = [];
+
+    function setup() {
+      let canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      colorMode(RGB);
+      background(0);
+
+      // Start with one burst in the center
+      spawnBurst(W / 2, H / 2);
+    }
+
+    function getAlpha(depth, maxDepth, fade) {
+      return map(depth, 0, maxDepth, 140, 20) * fade;
+    }
+
+    function spawnBurst(x, y) {
+      bursts.push({
+        cx: x,
+        cy: y,
+        birth: frameCount,
+        age: 0,
+        angleOff: random(TWO_PI),
+        speed: random(0.15, 0.35)
+      });
+      // Cap max bursts for performance
+      if (bursts.length > 8) bursts.shift();
+    }
+
+    // Apply gravitational pull from all other bursts to a vertex
+    function applyGravity(vx, vy, ownerCx, ownerCy) {
+      let pullX = 0, pullY = 0;
+      for (let b of bursts) {
+        if (abs(b.cx - ownerCx) < 1 && abs(b.cy - ownerCy) < 1) continue;
+        let dx = b.cx - vx;
+        let dy = b.cy - vy;
+        let d = sqrt(dx * dx + dy * dy);
+        if (d < GRAVITY_RANGE && d > 5) {
+          let strength = GRAVITY_STRENGTH * (1 - d / GRAVITY_RANGE);
+          // Scale pull by burst's current expansion (bigger = more pull)
+          let burstScale = min(1, b.age / 60);
+          pullX += (dx / d) * strength * burstScale;
+          pullY += (dy / d) * strength * burstScale;
+        }
+      }
+      return { x: vx + pullX * 30, y: vy + pullY * 30 };
+    }
+
+    // Recursively subdivide a triangle into 3 sub-triangles from centroid
+    function drawTriRec(ax, ay, bx, by, cx, cy, depth, maxDepth, fade) {
+      if (depth > maxDepth) return;
+
+      let mx = (ax + bx + cx) / 3;
+      let my = (ay + by + cy) / 3;
+
+      let alpha = getAlpha(depth, maxDepth, fade);
+      if (alpha < 1) return;
+
+      // Triangle edges
+      stroke(255, alpha * 0.6);
+      strokeWeight(map(depth, 0, maxDepth, 1.2, 0.3));
+      line(ax, ay, bx, by);
+      line(bx, by, cx, cy);
+      line(cx, cy, ax, ay);
+
+      // Spokes from centroid
+      stroke(255, alpha * 0.5);
+      strokeWeight(map(depth, 0, maxDepth, 0.8, 0.2));
+      line(mx, my, ax, ay);
+      line(mx, my, bx, by);
+      line(mx, my, cx, cy);
+
+      // Bright dot at centroid
+      noStroke();
+      fill(255, alpha * 1.4);
+      let dotR = map(depth, 0, maxDepth, 3, 1);
+      ellipse(mx, my, dotR, dotR);
+
+      // Recurse
+      drawTriRec(ax, ay, bx, by, mx, my, depth + 1, maxDepth, fade);
+      drawTriRec(bx, by, cx, cy, mx, my, depth + 1, maxDepth, fade);
+      drawTriRec(cx, cy, ax, ay, mx, my, depth + 1, maxDepth, fade);
+    }
+
+    // Burst lifecycle phases
+    const EXPAND_DUR = 90;   // frames to fully expand
+    const HOLD_DUR = 120;    // frames at full size
+    const IMPLODE_DUR = 80;  // frames to collapse back to center
+    const TOTAL_LIFE = EXPAND_DUR + HOLD_DUR + IMPLODE_DUR;
+
+    // Build rings for a single burst and return all vertex positions (for bridging)
+    function buildBurstRings(burst, t) {
+      let age = burst.age;
+
+      // Lifecycle: expand → hold → implode
+      let phase; // 0-1 scale factor
+      if (age < EXPAND_DUR) {
+        // Expanding: ease out
+        let p = age / EXPAND_DUR;
+        phase = 1 - (1 - p) * (1 - p); // ease out quad
+      } else if (age < EXPAND_DUR + HOLD_DUR) {
+        phase = 1;
+      } else {
+        // Imploding: ease in — accelerates toward center
+        let p = (age - EXPAND_DUR - HOLD_DUR) / IMPLODE_DUR;
+        p = min(1, p);
+        phase = (1 - p) * (1 - p); // ease in quad — snaps shut
+      }
+
+      // During implode, spin faster
+      let spinMult = 1;
+      if (age > EXPAND_DUR + HOLD_DUR) {
+        let p = (age - EXPAND_DUR - HOLD_DUR) / IMPLODE_DUR;
+        spinMult = 1 + p * 4; // accelerating spin
+      }
+
+      let baseR = (30 + 15 * phase) + 5 * sin(t * 0.5 + burst.angleOff) * phase;
+      let growthRatio = (0.8 + 0.3 * sin(t * 0.7 + burst.angleOff)) * phase;
+
+      let screenDiag = sqrt(W * W + H * H) / 2;
+      let numRings = 0;
+      let testR = baseR;
+      while (testR < screenDiag * 1.3 * phase && phase > 0.01) {
+        testR *= (1 + growthRatio * 0.866);
+        numRings++;
+        if (numRings > 6) break;
+      }
+      numRings = min(numRings, floor(1 + phase * 6));
+      if (phase < 0.05) numRings = 0;
+
+      let angleOff = burst.angleOff + t * burst.speed * spinMult;
+
+      let rings = [];
+      let allVerts = [];
+
+      // Ring 0: dodecagon
+      let ring0 = [];
+      for (let i = 0; i < N; i++) {
+        let a = (TWO_PI / N) * i + angleOff;
+        let vx = burst.cx + cos(a) * baseR;
+        let vy = burst.cy + sin(a) * baseR;
+        // During implode, pull vertices toward center
+        if (phase < 1 && age > EXPAND_DUR) {
+          vx = lerp(burst.cx, vx, phase);
+          vy = lerp(burst.cy, vy, phase);
+        }
+        let v = applyGravity(vx, vy, burst.cx, burst.cy);
+        ring0.push(v);
+        allVerts.push(v);
+      }
+      rings.push(ring0);
+
+      // Outer rings
+      for (let r = 0; r < numRings; r++) {
+        let inner = rings[r];
+        let outer = [];
+        for (let i = 0; i < N; i++) {
+          let va = inner[i];
+          let vb = inner[(i + 1) % N];
+
+          let emx = (va.x + vb.x) / 2;
+          let emy = (va.y + vb.y) / 2;
+
+          let dx = emx - burst.cx;
+          let dy = emy - burst.cy;
+          let dl = sqrt(dx * dx + dy * dy);
+          if (dl < 0.1) dl = 0.1;
+          dx /= dl;
+          dy /= dl;
+
+          let edgeLen = dist(va.x, va.y, vb.x, vb.y);
+          let apexDist = edgeLen * growthRatio * 0.866;
+
+          let vx = emx + dx * apexDist;
+          let vy = emy + dy * apexDist;
+          // Pull toward center during implode
+          if (phase < 1 && age > EXPAND_DUR) {
+            let pullStrength = pow(1 - phase, 0.5); // stronger pull for outer rings
+            vx = lerp(vx, burst.cx, pullStrength * 0.3 * (r + 1));
+            vy = lerp(vy, burst.cy, pullStrength * 0.3 * (r + 1));
+          }
+          let v = applyGravity(vx, vy, burst.cx, burst.cy);
+          outer.push(v);
+          allVerts.push(v);
+        }
+        rings.push(outer);
+      }
+
+      return { rings, allVerts, baseR, phase };
+    }
+
+    function drawBurst(burst, t) {
+      let { rings, allVerts, baseR, phase } = buildBurstRings(burst, t);
+
+      // Fade follows phase — bright during expand/hold, dims during implode
+      let fade;
+      if (burst.age < 20) {
+        fade = burst.age / 20; // quick fade in
+      } else if (burst.age < EXPAND_DUR + HOLD_DUR) {
+        fade = 1;
+      } else {
+        fade = max(0.05, phase); // fade with implosion
+      }
+
+      // Draw central dodecagon
+      let ring0 = rings[0];
+      let cAlpha = getAlpha(0, 5, fade);
+      noFill();
+      stroke(255, cAlpha * 0.7);
+      strokeWeight(1.5);
+      beginShape();
+      for (let v of ring0) vertex(v.x, v.y);
+      endShape(CLOSE);
+
+      stroke(255, cAlpha * 0.5);
+      strokeWeight(1);
+      for (let v of ring0) line(burst.cx, burst.cy, v.x, v.y);
+
+      noStroke();
+      fill(255, cAlpha * 1.5);
+      for (let v of ring0) ellipse(v.x, v.y, 3.5, 3.5);
+      // Center dot
+      fill(255, cAlpha * 2);
+      ellipse(burst.cx, burst.cy, 4, 4);
+
+      // Triangle strips
+      let baseDepth = 3;
+      for (let r = 0; r < rings.length - 1; r++) {
+        let inner = rings[r];
+        let outer = rings[r + 1];
+        let maxDepth = max(1, baseDepth - r);
+
+        for (let i = 0; i < N; i++) {
+          let iA = inner[i];
+          let iB = inner[(i + 1) % N];
+          let oA = outer[i];
+          let oPrev = outer[((i - 1) + N) % N];
+
+          drawTriRec(iA.x, iA.y, iB.x, iB.y, oA.x, oA.y, 0, maxDepth, fade);
+          drawTriRec(iA.x, iA.y, oPrev.x, oPrev.y, oA.x, oA.y, 0, maxDepth, fade);
+        }
+      }
+
+      return allVerts;
+    }
+
+    // Draw bridges between nearby vertices of different bursts
+    function drawBridges(allBurstVerts) {
+      for (let i = 0; i < allBurstVerts.length; i++) {
+        for (let j = i + 1; j < allBurstVerts.length; j++) {
+          let vertsA = allBurstVerts[i];
+          let vertsB = allBurstVerts[j];
+
+          // Sample a subset for performance
+          let stepA = max(1, floor(vertsA.length / 40));
+          let stepB = max(1, floor(vertsB.length / 40));
+
+          for (let a = 0; a < vertsA.length; a += stepA) {
+            let va = vertsA[a];
+            for (let b = 0; b < vertsB.length; b += stepB) {
+              let vb = vertsB[b];
+              let d = dist(va.x, va.y, vb.x, vb.y);
+              if (d < BRIDGE_DIST && d > 3) {
+                let alpha = map(d, 0, BRIDGE_DIST, 120, 0);
+                stroke(255, alpha);
+                strokeWeight(map(d, 0, BRIDGE_DIST, 1.5, 0.3));
+                line(va.x, va.y, vb.x, vb.y);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    function draw() {
+      // Partial screen erase
+      noStroke();
+      fill(0, 20);
+      rect(0, 0, W, H);
+
+      let t = frameCount * 0.006;
+
+      // Update burst ages
+      for (let b of bursts) b.age = frameCount - b.birth;
+
+      // Remove bursts that have fully imploded
+      bursts = bursts.filter(b => b.age < TOTAL_LIFE);
+
+      // Draw all bursts, collect vertices for bridging
+      let allBurstVerts = [];
+      for (let b of bursts) {
+        let verts = drawBurst(b, t);
+        allBurstVerts.push(verts);
+      }
+
+      // Draw bridges between bursts
+      if (allBurstVerts.length > 1) {
+        drawBridges(allBurstVerts);
+      }
+    }
+
+    function mousePressed() {
+      if (mouseX >= 0 && mouseX <= W && mouseY >= 0 && mouseY <= H) {
+        spawnBurst(mouseX, mouseY);
+      }
+    }
+  </script>
+</SketchLayout>
