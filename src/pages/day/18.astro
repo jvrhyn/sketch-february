@@ -1,0 +1,294 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="moving mountains"
+  day={18}
+  description="WASD to fly, mouse to look — terrain generates as you explore"
+>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+
+    // Terrain grid settings
+    const GRID = 12;           // spacing between vertices
+    const HALF_VIEW = 40;      // grid cells visible in each direction
+    const NOISE_SCALE = 0.018;
+    const AMP_MIN = 0.0;
+    const AMP_MAX = 2.5;
+    const HEIGHT_AMP = 600;
+
+    // Camera state
+    let camX = 0, camY = -150, camZ = 0;
+    let yaw = 0, pitch = 0.4;
+    let speed = 0;
+    let strafeSpeed = 0;
+    let vertSpeed = 0;
+    const FLY_SPEED = 4;
+    const MOUSE_SENS = 0.003;
+
+    let keys = {};
+    let isLocked = false;
+
+    // Height cache to avoid redundant noise calls
+    let heightCache = {};
+    let cacheFrame = 0;
+
+    // Light direction (ray pointing downward toward terrain, from upper-right)
+    const LDx = 0.4, LDy = 0.7, LDz = 0.3;
+    const LDl = Math.sqrt(LDx*LDx + LDy*LDy + LDz*LDz);
+    const Lx = LDx/LDl, Ly = LDy/LDl, Lz = LDz/LDl;
+
+    function setup() {
+      let canvas = createCanvas(W, H, WEBGL);
+      canvas.parent('sketch-container');
+      // White sky via CSS — clear() makes canvas transparent so this shows through
+      canvas.elt.style.background = '#ffffff';
+      noStroke();
+
+      canvas.elt.addEventListener('click', () => {
+        canvas.elt.requestPointerLock();
+      });
+
+      document.addEventListener('pointerlockchange', () => {
+        isLocked = document.pointerLockElement === canvas.elt;
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isLocked) return;
+        yaw -= e.movementX * MOUSE_SENS;
+        pitch += e.movementY * MOUSE_SENS;
+        pitch = constrain(pitch, -1.2, 1.2);
+      });
+    }
+
+    let curAmpMult = AMP_MAX;
+    let noiseOffX = 1000;
+    let noiseOffZ = 1000;
+    let prevS = 0;
+    let wasRising = true;
+
+    function getHeight(gx, gz) {
+      let key = gx + ',' + gz;
+      if (heightCache[key] !== undefined) return heightCache[key] * curAmpMult;
+
+      let nx = gx * NOISE_SCALE + noiseOffX;
+      let nz = gz * NOISE_SCALE + noiseOffZ;
+
+      let h = noise(nx, nz);
+      h += 0.5 * noise(nx * 2 + 500, nz * 2 + 500);
+      h += 0.25 * noise(nx * 4 + 200, nz * 4 + 200);
+      h /= 1.75;
+      h = pow(h, 2.2);
+      h *= HEIGHT_AMP;
+      // Center around zero so valleys dip below the flat plane
+      h -= HEIGHT_AMP * 0.25;
+
+      heightCache[key] = h;
+      return h * curAmpMult;
+    }
+
+    function terrainShade(avgH, nx, ny, nz) {
+      let t = avgH / HEIGHT_AMP;
+
+      // Directional lighting — normal should point up (negative y in p5 WEBGL)
+      let ndotl = nx * Lx + ny * Ly + nz * Lz;
+      let diffuse = -ndotl;
+      if (diffuse < 0) diffuse = 0;
+      if (diffuse > 1) diffuse = 1;
+
+      // Base brightness from height — lighter overall
+      let base;
+      if (t < 0.05) {
+        base = 50;
+      } else if (t < 0.2) {
+        base = 50 + (t - 0.05) / 0.15 * 30;
+      } else if (t < 0.5) {
+        base = 80 + (t - 0.2) / 0.3 * 35;
+      } else if (t < 0.75) {
+        base = 115 + (t - 0.5) / 0.25 * 25;
+      } else {
+        base = 140 + (t - 0.75) / 0.25 * 30;
+      }
+
+      // Combine ambient + diffuse
+      let lit = base * (0.4 + 0.6 * diffuse);
+      if (lit > 195) lit = 195;
+      return lit;
+    }
+
+    function draw() {
+      clear();
+
+      // Oscillate amplitude over time — terrain breathes
+      let t = frameCount * 0.01;
+      let s = (cos(t) + 1) * 0.5; // 0 to 1, starts at 1
+      curAmpMult = AMP_MIN + s * (AMP_MAX - AMP_MIN);
+
+      // Detect when amplitude crosses the bottom — swap noise for new mountains
+      let rising = s > prevS;
+      if (rising && !wasRising) {
+        // Just hit the trough — randomize noise offset
+        noiseOffX = random(10000);
+        noiseOffZ = random(10000);
+        heightCache = {};
+      }
+      wasRising = rising;
+      prevS = s;
+
+      // Clear cache periodically to prevent memory growth
+      cacheFrame++;
+      if (cacheFrame % 300 === 0) heightCache = {};
+
+      // Handle movement
+      let forward = 0, strafe = 0, vert = 0;
+      if (keys['w'] || keys['arrowup']) forward += FLY_SPEED;
+      if (keys['s'] || keys['arrowdown']) forward -= FLY_SPEED;
+      if (keys['a'] || keys['arrowleft']) strafe += FLY_SPEED;
+      if (keys['d'] || keys['arrowright']) strafe -= FLY_SPEED;
+      if (keys[' ']) vert -= FLY_SPEED;
+      if (keys['shift']) vert += FLY_SPEED;
+
+      speed = lerp(speed, forward, 0.15);
+      strafeSpeed = lerp(strafeSpeed, strafe, 0.15);
+      vertSpeed = lerp(vertSpeed, vert, 0.15);
+
+      let cosY = cos(yaw), sinY = sin(yaw);
+      let cosP = cos(pitch), sinP = sin(pitch);
+
+      camX += sinY * cosP * speed + cosY * strafeSpeed;
+      camY += sinP * speed + vertSpeed;
+      camZ += cosY * cosP * speed - sinY * strafeSpeed;
+
+      // Prevent going below terrain
+      let gridGX = Math.round(camX / GRID);
+      let gridGZ = Math.round(camZ / GRID);
+      let groundH = getHeight(gridGX, gridGZ);
+      if (-camY < groundH + 20) {
+        camY = -(groundH + 20);
+      }
+
+      let lookX = camX + sinY * cosP * 100;
+      let lookY = camY + sinP * 100;
+      let lookZ = camZ + cosY * cosP * 100;
+
+      camera(camX, camY, camZ, lookX, lookY, lookZ, 0, 1, 0);
+      perspective(PI / 3, W / H, 1, HALF_VIEW * GRID * 2);
+
+      let fogDist = HALF_VIEW * GRID;
+      let fogDistSq = fogDist * fogDist;
+      let fogStartSq = (fogDist * 0.35) * (fogDist * 0.35);
+
+      // Draw terrain as triangle strips per row
+      for (let gz = gridGZ - HALF_VIEW; gz < gridGZ + HALF_VIEW; gz++) {
+        let wz0 = gz * GRID;
+        let wz1 = (gz + 1) * GRID;
+
+        // Pre-fetch heights for this row pair
+        let startGX = gridGX - HALF_VIEW;
+        let endGX = gridGX + HALF_VIEW;
+
+        for (let gx = startGX; gx < endGX; gx++) {
+          let wx0 = gx * GRID;
+          let wx1 = (gx + 1) * GRID;
+
+          // Squared distance for fog & culling (avoid sqrt)
+          let midX = wx0 + GRID * 0.5 - camX;
+          let midZ = wz0 + GRID * 0.5 - camZ;
+          let dSq = midX * midX + midZ * midZ;
+          if (dSq > fogDistSq) continue;
+
+          let h00 = getHeight(gx, gz);
+          let h10 = getHeight(gx + 1, gz);
+          let h01 = getHeight(gx, gz + 1);
+          let h11 = getHeight(gx + 1, gz + 1);
+
+          // Fog
+          let fogAmt = 0;
+          if (dSq > fogStartSq) {
+            fogAmt = (dSq - fogStartSq) / (fogDistSq - fogStartSq);
+            if (fogAmt > 1) fogAmt = 1;
+            fogAmt *= fogAmt;
+          }
+
+          // Triangle 1 (top-left)
+          {
+            let ay = -(h10 - h00);
+            let by = -(h01 - h00);
+            let nx = ay * GRID;
+            let ny = -GRID * GRID;
+            let nz = GRID * by - ay * 0;
+            // Simplified: nx = ay*GRID, ny = 0*0 - GRID*GRID = -GRID^2, nz = GRID*by
+            nz = GRID * by;
+            let nl = Math.sqrt(nx*nx + ny*ny + nz*nz);
+            if (nl > 0) { nx /= nl; ny /= nl; nz /= nl; }
+
+            let avgH = (h00 + h10 + h01) * 0.333;
+            let c = terrainShade(avgH, nx, ny, nz);
+            c = c + (255 - c) * fogAmt;
+
+            fill(c);
+            beginShape();
+            vertex(wx0, -h00, wz0);
+            vertex(wx1, -h10, wz0);
+            vertex(wx0, -h01, wz1);
+            endShape(CLOSE);
+          }
+
+          // Triangle 2 (bottom-right)
+          {
+            let ay = -(h01 - h11);
+            let by = -(h10 - h11);
+            let nx = -ay * GRID;
+            let ny = -GRID * GRID;
+            let nz = -GRID * by;
+            let nl = Math.sqrt(nx*nx + ny*ny + nz*nz);
+            if (nl > 0) { nx /= nl; ny /= nl; nz /= nl; }
+
+            let avgH = (h10 + h01 + h11) * 0.333;
+            let c = terrainShade(avgH, nx, ny, nz);
+            c = c + (255 - c) * fogAmt;
+
+            fill(c);
+            beginShape();
+            vertex(wx1, -h10, wz0);
+            vertex(wx1, -h11, wz1);
+            vertex(wx0, -h01, wz1);
+            endShape(CLOSE);
+          }
+        }
+      }
+
+      // HUD
+      if (!isLocked) {
+        resetMatrix();
+        ortho(-W/2, W/2, -H/2, H/2, -1, 1);
+        noLights();
+        fill(40);
+        noStroke();
+        textSize(16);
+        textAlign(CENTER, CENTER);
+        text('click to fly', 0, 0);
+        textSize(11);
+        fill(100);
+        text('WASD + mouse look', 0, 25);
+        text('space = rise · shift = descend', 0, 42);
+      }
+    }
+
+    function keyPressed() {
+      keys[key.toLowerCase()] = true;
+      if (key === ' ') keys[' '] = true;
+      if (keyCode === SHIFT) keys['shift'] = true;
+      return false;
+    }
+
+    function keyReleased() {
+      keys[key.toLowerCase()] = false;
+      if (key === ' ') keys[' '] = false;
+      if (keyCode === SHIFT) keys['shift'] = false;
+      return false;
+    }
+  </script>
+</SketchLayout>
