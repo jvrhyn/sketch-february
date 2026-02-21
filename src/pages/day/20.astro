@@ -1,0 +1,323 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="hyperbolic drift"
+  day={20}
+  description="poincaré disk tessellation — {p,q} Schwarz triangles"
+>
+  <style>
+    .controls {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+    .slider-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .slider-group label {
+      font-size: 0.7rem;
+      opacity: 0.4;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      min-width: 3rem;
+    }
+    .slider-group input[type="range"] {
+      width: 100px;
+      accent-color: #888;
+    }
+    .val {
+      font-size: 0.7rem;
+      opacity: 0.4;
+      width: 1.4rem;
+      text-align: right;
+    }
+    .hint {
+      font-size: 0.6rem;
+      opacity: 0.3;
+      text-align: center;
+      margin-top: 0.25rem;
+    }
+  </style>
+
+  <script is:inline>
+    document.addEventListener('DOMContentLoaded', () => {
+      const container = document.getElementById('sketch-container');
+      const ctrl = document.createElement('div');
+      ctrl.className = 'controls';
+      ctrl.innerHTML = `
+        <div class="slider-group">
+          <label>p</label>
+          <input type="range" id="sl-p" min="4" max="12" step="1" value="4">
+          <span class="val" id="vp">4</span>
+        </div>
+        <div class="slider-group">
+          <label>q</label>
+          <input type="range" id="sl-q" min="3" max="12" step="1" value="5">
+          <span class="val" id="vq">5</span>
+        </div>
+        <div class="hint" id="hint">(p−2)(q−2) must exceed 4 for hyperbolic geometry</div>
+      `;
+      container.parentNode.insertBefore(ctrl, container.nextSibling);
+    });
+  </script>
+
+  <script is:inline>
+    // ── Poincaré-disk {p,q} tessellation ──────────────────────────────────
+    // Per-pixel approach: for each point in the disk, iteratively fold it
+    // into the fundamental domain using rotations, reflections (conjugation),
+    // and circle inversions (geodesic reflections). Track parity for coloring.
+    // Based on the (2,p,q) triangle group.
+
+    const SIZE   = 600;
+    const RADIUS = 272;
+
+    let pg = 4, qg = 5, maxIter = 8;
+    let contrastVal = 0.95;
+    let needsRedraw = true;
+
+    // ── Möbius translation state (hyperbolic panning) ────────────────────
+    // a = complex translation parameter inside the unit disk
+    let mob_re = 0, mob_im = 0;
+    let target_re = 0, target_im = 0;
+    let renderTimer = null;
+
+    // Möbius automorphism: T_a(z) = (z + a) / (1 + conj(a)*z)
+    function mobius(zx, zy, are, aim) {
+      const nre = zx + are;
+      const nim = zy + aim;
+      const dre = 1 + are * zx + aim * zy;
+      const dim = are * zy - aim * zx;
+      const dd = dre * dre + dim * dim;
+      return { x: (nre * dre + nim * dim) / dd, y: (nim * dre - nre * dim) / dd };
+    }
+
+    // ── minimum q to stay hyperbolic given p ─────────────────────────────
+    const qMin = p => Math.floor(1 / (0.5 - 1/p)) + 1;
+    const pMin = q => Math.floor(1 / (0.5 - 1/q)) + 1;
+
+    // ── precalculated geometry ───────────────────────────────────────────
+    let gd, gr, gr2, gtanpip, grot_re, grot_im;
+
+    function precalc(p, q) {
+      const sp = Math.sin(Math.PI / p), cp = Math.cos(Math.PI / p);
+      const cq = Math.cos(Math.PI / q);
+      const denom = cq * cq - sp * sp;
+      if (denom <= 0) return false;
+      // d = distance from origin to inversion circle center
+      // r = inversion circle radius
+      gd = Math.sqrt(cq * cq / denom);
+      gr = Math.sqrt(sp * sp / denom);
+      gr2 = gr * gr;
+      gtanpip = Math.tan(Math.PI / p);
+      grot_re = Math.cos(2 * Math.PI / p);
+      grot_im = Math.sin(2 * Math.PI / p);
+      return true;
+    }
+
+    // ── check if z=(x,y) is in the fundamental domain ───────────────────
+    // Wedge: 0 ≤ arg(z) < π/p, and outside the inversion circle at (d,0).
+    function inFund(x, y) {
+      if (y < 0) return false;
+      if (y >= gtanpip * x) return false;
+      const dx = x - gd;
+      return dx * dx + y * y > gr2;
+    }
+
+    // ── render the tessellation per-pixel ────────────────────────────────
+    function renderTessellation() {
+      if (!precalc(pg, qg)) {
+        background(15);
+        return;
+      }
+
+      const dark  = Math.round(lerp(210,  5, contrastVal));
+      const light = Math.round(lerp(210, 250, contrastVal));
+      const bg    = 15;
+
+      loadPixels();
+
+      const cx = SIZE / 2;
+      const cy = SIZE / 2;
+      const invR = 1.0 / RADIUS;
+
+      for (let py = 0; py < SIZE; py++) {
+        const baseY = -(py - cy) * invR;
+        for (let px = 0; px < SIZE; px++) {
+          const idx = 4 * (py * SIZE + px);
+
+          let x = (px - cx) * invR;
+          let y = baseY;
+
+          // Outside the disk → background
+          if (x * x + y * y >= 1.0) {
+            pixels[idx] = bg; pixels[idx+1] = bg; pixels[idx+2] = bg; pixels[idx+3] = 255;
+            continue;
+          }
+
+          // Apply Möbius translation (hyperbolic pan)
+          if (mob_re !== 0 || mob_im !== 0) {
+            const m = mobius(x, y, mob_re, mob_im);
+            x = m.x; y = m.y;
+          }
+
+          // Tiny perturbation to avoid exact boundary issues
+          x += 1e-5;
+
+          let parity = 0;
+          let converged = false;
+
+          for (let iter = 0; iter < maxIter; iter++) {
+            // 1. Rotate z into the fundamental wedge |arg(z)| < π/p
+            let em = 0;
+            while (em < 200) {
+              const ay = y < 0 ? -y : y;
+              if (ay <= gtanpip * x) break;
+              if (y < 0) {
+                // Rotate counterclockwise by 2π/p
+                const nx = x * grot_re - y * grot_im;
+                const ny = x * grot_im + y * grot_re;
+                x = nx; y = ny;
+              } else {
+                // Rotate clockwise by 2π/p (multiply by conjugate of rotator)
+                const nx =  x * grot_re + y * grot_im;
+                const ny = -x * grot_im + y * grot_re;
+                x = nx; y = ny;
+              }
+              em++;
+            }
+
+            // 2. Check fundamental domain
+            if (inFund(x, y)) { converged = true; break; }
+
+            // 3. Conjugate (reflect across real axis)
+            y = -y;
+            parity++;
+
+            if (inFund(x, y)) { converged = true; break; }
+
+            // 4. Circle inversion through geodesic at (d, 0) with radius r
+            const wx = x - gd;
+            const wy = y;
+            const ww = wx * wx + wy * wy;
+            if (ww > 1e-12) {
+              const s = gr2 / ww;
+              const nx = gd + wx * s;
+              const ny = -wy * s;
+              // Only accept if it moves us closer to origin
+              if (nx * nx + ny * ny < x * x + y * y) {
+                x = nx;
+                y = ny;
+                parity++;
+              }
+            }
+
+            if (inFund(x, y)) { converged = true; break; }
+          }
+
+          let col;
+          if (!converged) {
+            col = (dark + light) >> 1;
+          } else {
+            col = (parity & 1) === 0 ? light : dark;
+          }
+
+          pixels[idx]     = col;
+          pixels[idx + 1] = col;
+          pixels[idx + 2] = col;
+          pixels[idx + 3] = 255;
+        }
+      }
+
+      updatePixels();
+
+      // Disk boundary
+      noFill();
+      stroke(40);
+      strokeWeight(2);
+      ellipse(cx, cy, RADIUS * 2, RADIUS * 2);
+    }
+
+    // ── throttled re-render ─────────────────────────────────────────────
+    function scheduleRender() {
+      if (renderTimer) return;
+      renderTimer = setTimeout(() => {
+        renderTimer = null;
+        needsRedraw = true;
+        redraw();
+      }, 150);
+    }
+
+    // ── p5 setup ─────────────────────────────────────────────────────────
+    function setup() {
+      const canvas = createCanvas(SIZE, SIZE);
+      canvas.parent('sketch-container');
+      pixelDensity(1);
+      noLoop();
+
+      document.getElementById('sl-p').addEventListener('input', function() {
+        pg = parseInt(this.value);
+        document.getElementById('vp').textContent = pg;
+        const mq = qMin(pg);
+        if (qg < mq) {
+          qg = mq;
+          document.getElementById('sl-q').value = qg;
+          document.getElementById('vq').textContent = qg;
+        }
+        needsRedraw = true;
+        redraw();
+      });
+      document.getElementById('sl-q').addEventListener('input', function() {
+        qg = parseInt(this.value);
+        document.getElementById('vq').textContent = qg;
+        const mp = pMin(qg);
+        if (pg < mp) {
+          pg = mp;
+          document.getElementById('sl-p').value = pg;
+          document.getElementById('vp').textContent = pg;
+        }
+        needsRedraw = true;
+        redraw();
+      });
+
+      needsRedraw = true;
+    }
+
+    function draw() {
+      if (needsRedraw) {
+        renderTessellation();
+        needsRedraw = false;
+      }
+    }
+
+    // ── mouse follow for hyperbolic panning ──────────────────────────────
+    function mouseMoved() {
+      const dx = (mouseX - SIZE / 2) / RADIUS;
+      const dy = -(mouseY - SIZE / 2) / RADIUS;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len >= 1.0) return;
+
+      // Very gentle scaling — small tanh factor keeps movement subtle
+      const scale = len > 0 ? Math.tanh(len * 0.6) / len : 0;
+      target_re = dx * scale;
+      target_im = dy * scale;
+
+      // Smoothly lerp toward target
+      const ease = 0.09;
+      const new_re = mob_re + (target_re - mob_re) * ease;
+      const new_im = mob_im + (target_im - mob_im) * ease;
+
+      if (Math.abs(new_re - mob_re) > 0.003 || Math.abs(new_im - mob_im) > 0.003) {
+        mob_re = new_re;
+        mob_im = new_im;
+        scheduleRender();
+      }
+    }
+  </script>
+</SketchLayout>
