@@ -1,0 +1,232 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="lattice pulse"
+  day={19}
+  description="click to spread static through the diamond grid"
+>
+  <style>
+    .controls {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      align-items: center;
+      margin-top: 0.5rem;
+    }
+    .slider-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .slider-group label {
+      font-size: 0.7rem;
+      opacity: 0.4;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .slider-group input[type="range"] {
+      width: 120px;
+      accent-color: #888;
+    }
+  </style>
+  <script is:inline>
+    // Inject controls just below the canvas
+    document.addEventListener('DOMContentLoaded', () => {
+      let container = document.getElementById('sketch-container');
+      let controls = document.createElement('div');
+      controls.className = 'controls';
+      controls.innerHTML = `
+        <div class="slider-group">
+          <label>spread</label>
+          <input type="range" id="spread-slider" min="0" max="100" value="50">
+        </div>
+        <div class="slider-group">
+          <label>decay</label>
+          <input type="range" id="decay-slider" min="0" max="100" value="35">
+        </div>
+      `;
+      container.parentNode.insertBefore(controls, container.nextSibling);
+    });
+  </script>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const DIAMOND_SIZE = 80;
+    const SUB_DOTS = 7;
+    const DOT_R = 4;
+    const SUB_DOT_R = 4;
+    const BG = 90;
+
+    // Slider-driven parameters (0–1 range mapped from slider 0–100)
+    let spreadSpeed = 0.5;
+    let decaySpeed = 0.1;
+
+    let dots = [];
+    let dotGrid = {};
+
+    function setup() {
+      let canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      noStroke();
+
+      // Wire up sliders
+      document.getElementById('spread-slider').addEventListener('input', function() {
+        spreadSpeed = this.value / 100;
+      });
+      document.getElementById('decay-slider').addEventListener('input', function() {
+        decaySpeed = this.value / 100;
+      });
+
+      let dx = DIAMOND_SIZE;
+      let dy = DIAMOND_SIZE * 0.5;
+
+      let cols = Math.ceil(W / dx) + 2;
+      let rows = Math.ceil(H / dy) + 2;
+
+      let idx = 0;
+      for (let row = -2; row < rows; row++) {
+        for (let col = -2; col < cols; col++) {
+          let cx = col * dx + (row % 2) * dx * 0.5;
+          let cy = row * dy;
+
+          if (cx < -DIAMOND_SIZE || cx > W + DIAMOND_SIZE ||
+              cy < -DIAMOND_SIZE || cy > H + DIAMOND_SIZE) continue;
+
+          let gridKey = col + ',' + row;
+          dotGrid[gridKey] = [];
+
+          dots.push({
+            x: cx, y: cy, u: 0, v: 0,
+            light: 0, decay: 0, spreadDelay: 0,
+            r: DOT_R, col: col, row: row
+          });
+          dotGrid[gridKey].push(idx);
+          idx++;
+
+          for (let sy = 0; sy < SUB_DOTS; sy++) {
+            for (let sx = 0; sx < SUB_DOTS; sx++) {
+              let u = (sx + 1) / (SUB_DOTS + 1) * 2 - 1;
+              let v = (sy + 1) / (SUB_DOTS + 1) * 2 - 1;
+
+              if (Math.abs(u) + Math.abs(v) > 0.95) continue;
+
+              let px = cx + u * DIAMOND_SIZE * 0.45;
+              let py = cy + v * DIAMOND_SIZE * 0.45;
+
+              dots.push({
+                x: px, y: py, u: u, v: v,
+                light: 0, decay: 0, spreadDelay: 0,
+                r: SUB_DOT_R, col: col, row: row
+              });
+              dotGrid[gridKey].push(idx);
+              idx++;
+            }
+          }
+        }
+      }
+    }
+
+    function diagonalAffinity(src, dst) {
+      let dx = dst.x - src.x;
+      let dy = dst.y - src.y;
+      let len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 0.1) return 1;
+      dx /= len;
+      dy /= len;
+
+      let bestAlign = Math.max(Math.abs(dx), Math.abs(dy));
+
+      let srcOnDiag = Math.min(Math.abs(src.u), Math.abs(src.v)) < 0.2 ? 2.0 : 0.3;
+      let dstOnDiag = Math.min(Math.abs(dst.u), Math.abs(dst.v)) < 0.2 ? 2.0 : 0.3;
+
+      return bestAlign * bestAlign * srcOnDiag * dstOnDiag;
+    }
+
+    function draw() {
+      background(60);
+
+      // Map slider values to parameter ranges
+      let decayRate = lerp(0.0005, 0.02, decaySpeed);
+      let decayMult = lerp(0.1, 2.0, decaySpeed);
+      let spreadChance = lerp(0.08, 0.85, spreadSpeed);
+      let spreadProb = lerp(0.015, 0.18, spreadSpeed);
+      let delayMax = floor(lerp(15, 1, spreadSpeed));
+
+      // Update dot states
+      let toSpread = [];
+      for (let i = 0; i < dots.length; i++) {
+        let d = dots[i];
+        if (d.light > 0) {
+          d.decay += decayRate + random(decayRate * 0.5);
+          d.light = max(0, d.light - d.decay * decayMult);
+
+          if (d.spreadDelay > 0) {
+            d.spreadDelay--;
+          } else if (d.light > 0.1 && random() < spreadChance) {
+            toSpread.push(i);
+          }
+        }
+      }
+
+      // Spread with strong diagonal bias
+      for (let si of toSpread) {
+        let src = dots[si];
+        for (let dr = -2; dr <= 2; dr++) {
+          for (let dc = -2; dc <= 2; dc++) {
+            let key = (src.col + dc) + ',' + (src.row + dr);
+            let neighbors = dotGrid[key];
+            if (!neighbors) continue;
+            for (let ni of neighbors) {
+              let nd = dots[ni];
+              if (nd.light > 0.1) continue;
+              let ddx = nd.x - src.x;
+              let ddy = nd.y - src.y;
+              let distSq = ddx * ddx + ddy * ddy;
+              let maxDist = DIAMOND_SIZE * 2.5;
+              if (distSq < maxDist * maxDist) {
+                let distFactor = 1 - distSq / (maxDist * maxDist);
+                let diagFactor = diagonalAffinity(src, nd);
+
+                let prob = spreadProb * distFactor * diagFactor;
+                prob *= random(0.3, 2.5);
+
+                if (random() < prob) {
+                  nd.light = src.light * random(0.55, 0.98);
+                  nd.decay = 0;
+                  nd.spreadDelay = floor(random(0, delayMax));
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Draw all dots
+      for (let d of dots) {
+        let brightness = lerp(BG * 0.4, 255, d.light);
+        fill(brightness);
+        ellipse(d.x, d.y, d.r * 2, d.r * 2);
+      }
+    }
+
+    function mousePressed() {
+      if (mouseX < 0 || mouseX > W || mouseY < 0 || mouseY > H) return;
+
+      let clickR = DIAMOND_SIZE * 0.8;
+      let clickRSq = clickR * clickR;
+      for (let d of dots) {
+        let dx = d.x - mouseX;
+        let dy = d.y - mouseY;
+        let distSq = dx * dx + dy * dy;
+        if (distSq < clickRSq) {
+          let strength = 1 - distSq / clickRSq;
+          d.light = max(d.light, strength * random(0.7, 1.0));
+          d.decay = 0;
+          d.spreadDelay = floor(random(1, 5));
+        }
+      }
+    }
+  </script>
+</SketchLayout>
