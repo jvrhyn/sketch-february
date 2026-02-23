@@ -5,7 +5,7 @@ import SketchLayout from '../../layouts/SketchLayout.astro';
 <SketchLayout
   title="vector field"
   day={22}
-  description="clocks orbit your cursor"
+  description="hour hands orbit your cursor — minute hands follow"
 >
   <script is:inline>
     const SIZE = 600;
@@ -60,9 +60,14 @@ import SketchLayout from '../../layouts/SketchLayout.astro';
           const ha = angle - HALF_PI;
           line(cx, cy, cx + cos(ha) * R * 0.55, cy + sin(ha) * R * 0.55);
 
-          // Minute hand (always at 12)
+          // Minute hand — fractional hour determines minute position
+          // angle is clockwise from 12; convert to continuous hour (0-12)
+          const hourCont = (((angle % TWO_PI) + TWO_PI) % TWO_PI) / TWO_PI * 12;
+          const minuteFrac = hourCont % 1; // 0-1 within the hour
+          const ma = minuteFrac * TWO_PI - HALF_PI;
+          stroke(0, 60);
           strokeWeight(1);
-          line(cx, cy, cx, cy - R * 0.75);
+          line(cx, cy, cx + cos(ma) * R * 0.75, cy + sin(ma) * R * 0.75);
 
           // Center dot
           fill(0);
