@@ -1,0 +1,74 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="shape soup"
+  day={21}
+  description="breathing shapes — black alone, white where they intersect"
+>
+  <script is:inline>
+    const SIZE = 600;
+    const NUM_SHAPES = 1000;
+    const CURSOR_RADIUS = 150;
+    let buf;
+    let shapes = [];
+
+    function setup() {
+      const canvas = createCanvas(SIZE, SIZE);
+      canvas.parent('sketch-container');
+      buf = createGraphics(SIZE, SIZE);
+
+      for (let i = 0; i < NUM_SHAPES; i++) {
+        shapes.push({
+          type: floor(random(3)),
+          x: random(-60, SIZE + 60),
+          y: random(-60, SIZE + 60),
+          baseSize: random(30, 90),
+          phase: random(TWO_PI),
+          freq: random(0.4, 1.0),
+          amp: random(0.2, 0.5)
+        });
+      }
+    }
+
+    function draw() {
+      background(255);
+
+      buf.clear();
+      buf.noStroke();
+      buf.fill(0);
+      buf.drawingContext.globalCompositeOperation = 'xor';
+
+      for (let s of shapes) {
+        let sz = s.baseSize * (1 + s.amp * sin(frameCount * 0.02 * s.freq + s.phase));
+
+        let d = dist(mouseX, mouseY, s.x, s.y);
+        if (d < CURSOR_RADIUS) {
+          let t = 1 - d / CURSOR_RADIUS;
+          sz *= 1 - t * t * 0.9;
+        }
+
+        switch (s.type) {
+          case 0:
+            buf.ellipse(s.x, s.y, sz, sz);
+            break;
+          case 1:
+            buf.rectMode(CENTER);
+            buf.rect(s.x, s.y, sz, sz);
+            break;
+          case 2:
+            buf.beginShape();
+            for (let a = 0; a < 6; a++) {
+              let angle = TWO_PI / 6 * a - HALF_PI;
+              buf.vertex(s.x + cos(angle) * sz / 2, s.y + sin(angle) * sz / 2);
+            }
+            buf.endShape(CLOSE);
+            break;
+        }
+      }
+
+      image(buf, 0, 0);
+    }
+  </script>
+</SketchLayout>
