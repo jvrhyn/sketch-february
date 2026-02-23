@@ -1,0 +1,75 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="vector field"
+  day={22}
+  description="clocks orbit your cursor"
+>
+  <script is:inline>
+    const SIZE = 600;
+    const COLS = 12;
+    const ROWS = 12;
+    const CELL_W = SIZE / COLS;
+    const CELL_H = SIZE / ROWS;
+    const R = CELL_W * 0.38;
+
+    function setup() {
+      const canvas = createCanvas(SIZE, SIZE);
+      canvas.parent('sketch-container');
+    }
+
+    function draw() {
+      background(255);
+
+      const ox = mouseX;
+      const oy = mouseY;
+
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const cx = c * CELL_W + CELL_W / 2;
+          const cy = r * CELL_H + CELL_H / 2;
+
+          const dx = cx - ox;
+          const dy = cy - oy;
+
+          // Tangent direction (counter-clockwise orbit)
+          // Clock angle: clockwise from 12 o'clock
+          const angle = Math.atan2(dx, -dy);
+
+          // Clock face
+          noFill();
+          stroke(0);
+          strokeWeight(1.2);
+          ellipse(cx, cy, R * 2, R * 2);
+
+          // Hour ticks
+          for (let h = 0; h < 12; h++) {
+            const ta = h * TWO_PI / 12 - HALF_PI;
+            const inner = R * 0.82;
+            const outer = R * 0.95;
+            line(
+              cx + cos(ta) * inner, cy + sin(ta) * inner,
+              cx + cos(ta) * outer, cy + sin(ta) * outer
+            );
+          }
+
+          // Hour hand
+          strokeWeight(2);
+          const ha = angle - HALF_PI;
+          line(cx, cy, cx + cos(ha) * R * 0.55, cy + sin(ha) * R * 0.55);
+
+          // Minute hand (always at 12)
+          strokeWeight(1);
+          line(cx, cy, cx, cy - R * 0.75);
+
+          // Center dot
+          fill(0);
+          noStroke();
+          ellipse(cx, cy, 3, 3);
+        }
+      }
+    }
+  </script>
+</SketchLayout>
