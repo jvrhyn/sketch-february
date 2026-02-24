@@ -1,0 +1,89 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="breathing tessellation"
+  day={23}
+  description="move your mouse to shift the wave — spacebar toggles vertical waves"
+>
+  <script is:inline>
+    const SIZE = 600;
+    const COLS = 28;
+    const SPACING = SIZE / COLS;
+    const ROWS = Math.ceil(SIZE / SPACING) + 1;
+    const R = SPACING * 0.5;
+
+    // Greyscale palette: dark when spiky, light when open
+    const colSpiky = [20, 20, 20];
+    const colOpen  = [220, 220, 220];
+
+    let radialMode = true;
+
+    function setup() {
+      const canvas = createCanvas(SIZE, SIZE);
+      canvas.parent('sketch-container');
+      strokeJoin(MITER);
+    }
+
+    function keyPressed() {
+      if (key === ' ') radialMode = !radialMode;
+    }
+
+    function draw() {
+      background(255);
+
+      const t = millis() * 0.001;
+
+      // Wave origin follows mouse freely (even off canvas)
+      const ox = mouseX;
+      const oy = mouseY;
+
+      for (let row = -1; row <= ROWS; row++) {
+        for (let col = -1; col <= COLS; col++) {
+          const cx = col * SPACING + SPACING * 0.5;
+          const cy = row * SPACING + SPACING * 0.5;
+
+          // Morphing parameter: radial from mouse or vertical bands
+          let dist;
+          if (radialMode) {
+            const dx = cx - ox;
+            const dy = cy - oy;
+            dist = Math.sqrt(dx * dx + dy * dy);
+          } else {
+            dist = cx;
+          }
+          const wave = sin(dist * 0.018 - t * 1.4) * 0.5 + 0.5;
+
+          // Inner radius ratio: 0.35 (spiky) to 0.92 (almost octagon)
+          const innerRatio = lerp(0.35, 0.92, wave);
+
+          // Interpolate fill color based on wave
+          const fr = lerp(colSpiky[0], colOpen[0], wave);
+          const fg = lerp(colSpiky[1], colOpen[1], wave);
+          const fb = lerp(colSpiky[2], colOpen[2], wave);
+
+          drawStar(cx, cy, R * 0.95, R * 0.95 * innerRatio, 8, fr, fg, fb, wave);
+        }
+      }
+    }
+
+    function drawStar(cx, cy, outerR, innerR, points, fr, fg, fb, wave) {
+      const totalVerts = points * 2;
+
+      // Fill with alpha based on wave (spiky = more opaque, open = lighter)
+      const alpha = lerp(180, 40, wave);
+      fill(fr, fg, fb, alpha);
+      stroke(0, lerp(200, 60, wave));
+      strokeWeight(0.6);
+
+      beginShape();
+      for (let i = 0; i < totalVerts; i++) {
+        const angle = (i / totalVerts) * TWO_PI - HALF_PI;
+        const r = i % 2 === 0 ? outerR : innerR;
+        vertex(cx + cos(angle) * r, cy + sin(angle) * r);
+      }
+      endShape(CLOSE);
+    }
+  </script>
+</SketchLayout>
