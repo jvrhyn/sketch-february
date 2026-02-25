@@ -1,0 +1,525 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="guanyin x12"
+  day={24}
+  description="left/right arrow keys to cycle through twelve linework styles"
+>
+  <style>
+    .attribution {
+      text-align: center;
+      max-width: 600px;
+      margin: 1.5rem auto 0;
+      padding: 0 2rem;
+      font-size: 0.75rem;
+      opacity: 0.45;
+      line-height: 1.5;
+    }
+    .attribution a {
+      color: inherit;
+    }
+  </style>
+  <p class="attribution">
+    Photo &copy; <a href="https://www.flickr.com/people/101561334@N08" target="_blank" rel="noopener">Gary Todd</a>,
+    released under <a href="https://creativecommons.org/publicdomain/zero/1.0/deed.en" target="_blank" rel="noopener">CC0</a>.
+    Modified (linework rendering).
+  </p>
+  <script is:inline>
+    const CANVAS_W = 600;
+    const CANVAS_H = 600;
+    const TEXT_AREA = 80;
+    const IMG_AREA = CANVAS_H;
+    let img;
+    let brightnessData;
+    let sampleW, sampleH;
+    let currentStyle = 0;
+
+    const styleInfo = [
+      {
+        name: 'diagonal hatching',
+        desc: 'Parallel lines at a fixed angle. Line thickness and spacing are mapped to pixel brightness — darker pixels get thicker, more tightly packed lines.'
+      },
+      {
+        name: 'horizontal wobble',
+        desc: 'Horizontal lines with a sine wave displacement. The wave amplitude increases in darker regions. Lines break where the image is bright.'
+      },
+      {
+        name: 'concentric spiral',
+        desc: 'A single line spirals outward from the center. It only draws where the underlying pixel is dark, with stroke weight mapped to brightness.'
+      },
+      {
+        name: 'vertical drip',
+        desc: 'Vertical lines drawn top to bottom. Stroke weight increases in dark areas. A small sine offset adds horizontal drift based on darkness.'
+      },
+      {
+        name: 'cross-hatching',
+        desc: 'Two passes of diagonal lines in opposing directions. The first pass draws in moderately dark areas; the second only in the darkest regions, adding density.'
+      },
+      {
+        name: 'zigzag',
+        desc: 'Horizontal lines that alternate up and down at each step. The zigzag amplitude is proportional to local darkness — zero in bright areas, maximum in dark.'
+      },
+      {
+        name: 'stipple',
+        desc: 'Dots placed on a grid. Dot size and probability of placement are both controlled by pixel brightness. Positions are jittered slightly off-grid.'
+      },
+      {
+        name: 'contour lines',
+        desc: 'Marching squares at 14 evenly spaced brightness thresholds. Each threshold produces line segments where that brightness level crosses the grid, like a topographic map.'
+      },
+      {
+        name: 'scribble',
+        desc: 'Scans horizontally for dark regions, then draws back-and-forth overlapping sine waves within each span. Darker spans get more overlapping passes.'
+      },
+      {
+        name: 'radial burst',
+        desc: 'Lines radiate outward from a point near the top center. Each ray samples brightness along its length and only draws in dark areas, with a small perpendicular wobble.'
+      },
+      {
+        name: 'broken dashes',
+        desc: 'Short horizontal line segments placed row by row. Dash length and stroke weight are set by the brightness at each position. Gaps are inserted between dashes.'
+      },
+      {
+        name: 'flow field',
+        desc: 'Short curves seeded on a grid. Direction at each step follows the brightness gradient (perpendicular to contrast edges). Curve length is proportional to darkness.'
+      }
+    ];
+
+    function preload() {
+      img = loadImage('/guanyin.jpg');
+    }
+
+    function setup() {
+      const canvas = createCanvas(CANVAS_W, CANVAS_H);
+      canvas.parent('sketch-container');
+      pixelDensity(1);
+      noLoop();
+
+      sampleW = CANVAS_W;
+      sampleH = CANVAS_H;
+
+      const pg = createGraphics(sampleW, sampleH);
+      const imgAspect = img.width / img.height;
+      const canvasAspect = CANVAS_W / CANVAS_H;
+      let sx, sy, sw, sh;
+      if (imgAspect > canvasAspect) {
+        sh = img.height;
+        sw = img.height * canvasAspect;
+        sx = (img.width - sw) / 2;
+        sy = 0;
+      } else {
+        sw = img.width;
+        sh = img.width / canvasAspect;
+        sx = 0;
+        sy = (img.height - sh) / 2;
+      }
+      pg.image(img, 0, 0, sampleW, sampleH, sx, sy, sw, sh);
+      pg.loadPixels();
+
+      brightnessData = new Float32Array(sampleW * sampleH);
+      for (let i = 0; i < sampleW * sampleH; i++) {
+        const r = pg.pixels[i * 4];
+        const g = pg.pixels[i * 4 + 1];
+        const b = pg.pixels[i * 4 + 2];
+        brightnessData[i] = (r + g + b) / 3 / 255;
+      }
+      pg.remove();
+    }
+
+    function getB(px, py) {
+      const ix = constrain(Math.floor(px), 0, sampleW - 1);
+      const iy = constrain(Math.floor(py), 0, sampleH - 1);
+      return brightnessData[iy * sampleW + ix];
+    }
+
+    function drawTextBox() {
+      const info = styleInfo[currentStyle];
+      const y0 = CANVAS_H - TEXT_AREA;
+
+      // Semi-transparent background
+      noStroke();
+      fill(245, 242, 235, 230);
+      rect(0, y0, CANVAS_W, TEXT_AREA);
+
+      // Divider line
+      stroke(210, 205, 195);
+      strokeWeight(1);
+      line(20, y0, CANVAS_W - 20, y0);
+
+      // Style name
+      noStroke();
+      fill(30, 25, 20);
+      textFont('Helvetica');
+      textSize(15);
+      textStyle(BOLD);
+      textAlign(LEFT, TOP);
+      text(info.name, 20, y0 + 12);
+
+      // Counter + arrows
+      textStyle(NORMAL);
+      textSize(13);
+      fill(160, 155, 145);
+      textAlign(RIGHT, TOP);
+      text('\u2190  ' + (currentStyle + 1) + '/' + styleInfo.length + '  \u2192', CANVAS_W - 20, y0 + 13);
+
+      // Description
+      textAlign(LEFT, TOP);
+      textSize(12);
+      fill(100, 95, 85);
+      textStyle(NORMAL);
+      textLeading(17);
+      text(info.desc, 20, y0 + 34, CANVAS_W - 40, TEXT_AREA - 40);
+    }
+
+    function keyPressed() {
+      if (keyCode === RIGHT_ARROW) {
+        currentStyle = (currentStyle + 1) % styleInfo.length;
+        redraw();
+      } else if (keyCode === LEFT_ARROW) {
+        currentStyle = (currentStyle - 1 + styleInfo.length) % styleInfo.length;
+        redraw();
+      }
+    }
+
+    function draw() {
+      background(245, 242, 235);
+
+      const styles = [
+        drawDiagonalHatch,
+        drawWrappingContour,
+        drawConcentricSpiral,
+        drawVerticalDrip,
+        drawCrossHatch,
+        drawZigzag,
+        drawDots,
+        drawContourLines,
+        drawScribble,
+        drawRadialLines,
+        drawBrokenHorizontal,
+        drawFlowField
+      ];
+      styles[currentStyle](CANVAS_W, CANVAS_H);
+
+      drawTextBox();
+    }
+
+    // 0: Diagonal hatching
+    function drawDiagonalHatch(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const step = 3;
+      for (let d = -h; d < w + h; d += step) {
+        let drawing = false;
+        for (let y = 0; y < h; y += 2) {
+          const x = d + y * 0.7;
+          if (x < -5 || x > w + 5) continue;
+          const b = getB(x, y);
+          if (b < 0.88) {
+            strokeWeight(map(b, 0, 0.88, 1.8, 0.15));
+            if (!drawing) { beginShape(); drawing = true; }
+            vertex(x, y);
+          } else if (drawing) {
+            endShape();
+            drawing = false;
+          }
+        }
+        if (drawing) endShape();
+      }
+    }
+
+    // 1: Horizontal wobble
+    function drawWrappingContour(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const step = 4;
+      for (let y = 0; y < h; y += step) {
+        let hasPoints = false;
+        for (let x = 0; x < w; x += 1.5) {
+          const b = getB(x, y);
+          if (b < 0.88) {
+            const amplitude = map(b, 0, 0.88, 6, 0.5);
+            const wobble = sin(x * 0.15 + y * 0.1) * amplitude;
+            strokeWeight(map(b, 0, 0.88, 1.0, 0.25));
+            if (!hasPoints) { beginShape(); hasPoints = true; }
+            vertex(x, y + wobble);
+          } else if (hasPoints) {
+            endShape();
+            hasPoints = false;
+          }
+        }
+        if (hasPoints) endShape();
+      }
+    }
+
+    // 2: Concentric spiral
+    function drawConcentricSpiral(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const cx = w / 2, cy = h / 2;
+      const maxR = dist(0, 0, cx, cy);
+      let drawing = false;
+      for (let angle = 0; angle < TWO_PI * 120; angle += 0.03) {
+        const r = angle * maxR / (TWO_PI * 120);
+        const x = cx + cos(angle) * r;
+        const y = cy + sin(angle) * r;
+        if (x < 0 || x > w || y < 0 || y > h) {
+          if (drawing) { endShape(); drawing = false; }
+          continue;
+        }
+        const b = getB(x, y);
+        if (b < 0.88) {
+          strokeWeight(map(b, 0, 0.88, 1.6, 0.2));
+          if (!drawing) { beginShape(); drawing = true; }
+          vertex(x, y);
+        } else if (drawing) {
+          endShape();
+          drawing = false;
+        }
+      }
+      if (drawing) endShape();
+    }
+
+    // 3: Vertical drip
+    function drawVerticalDrip(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const step = 2.5;
+      for (let x = 0; x < w; x += step) {
+        let drawing = false;
+        for (let y = 0; y < h; y += 1.5) {
+          const b = getB(x, y);
+          if (b < 0.88) {
+            if (!drawing) { beginShape(); drawing = true; }
+            const drift = sin(y * 0.08 + x * 0.15) * map(b, 0, 0.88, 2, 0);
+            strokeWeight(map(b, 0, 0.88, 1.4, 0.2));
+            vertex(x + drift, y);
+          } else if (drawing) {
+            endShape();
+            drawing = false;
+          }
+        }
+        if (drawing) endShape();
+      }
+    }
+
+    // 4: Cross-hatching
+    function drawCrossHatch(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const step = 4;
+      for (let d = -h; d < w + h; d += step) {
+        let drawing = false;
+        for (let t = 0; t < max(w, h) * 2; t += 2) {
+          const x = d + t * 0.5;
+          const y = t * 0.9;
+          if (x < 0 || x > w || y < 0 || y > h) { if (drawing) { endShape(); drawing = false; } continue; }
+          const b = getB(x, y);
+          if (b < 0.85) {
+            strokeWeight(map(b, 0, 0.85, 1.0, 0.15));
+            if (!drawing) { beginShape(); drawing = true; }
+            vertex(x, y);
+          } else if (drawing) { endShape(); drawing = false; }
+        }
+        if (drawing) endShape();
+      }
+      for (let d = -h; d < w + h; d += step) {
+        let drawing = false;
+        for (let t = 0; t < max(w, h) * 2; t += 2) {
+          const x = w - (d + t * 0.5);
+          const y = t * 0.9;
+          if (x < 0 || x > w || y < 0 || y > h) { if (drawing) { endShape(); drawing = false; } continue; }
+          const b = getB(x, y);
+          if (b < 0.6) {
+            strokeWeight(map(b, 0, 0.6, 0.9, 0.15));
+            if (!drawing) { beginShape(); drawing = true; }
+            vertex(x, y);
+          } else if (drawing) { endShape(); drawing = false; }
+        }
+        if (drawing) endShape();
+      }
+    }
+
+    // 5: Zigzag
+    function drawZigzag(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const step = 4.5;
+      for (let y = 0; y < h; y += step) {
+        let hasPoints = false;
+        for (let x = 0; x < w; x += 2.5) {
+          const b = getB(x, y);
+          if (b < 0.88) {
+            const amp = map(b, 0, 0.88, step * 0.45, 0);
+            const zig = (Math.floor(x / 2.5) % 2 === 0) ? -amp : amp;
+            strokeWeight(map(b, 0, 0.88, 1.0, 0.2));
+            if (!hasPoints) { beginShape(); hasPoints = true; }
+            vertex(x, y + zig);
+          } else if (hasPoints) { endShape(); hasPoints = false; }
+        }
+        if (hasPoints) endShape();
+      }
+    }
+
+    // 6: Stipple dots
+    function drawDots(w, h) {
+      noStroke();
+      fill(25, 20, 15);
+      for (let y = 0; y < h; y += 2.5) {
+        for (let x = 0; x < w; x += 2.5) {
+          const b = getB(x, y);
+          if (b < 0.88 && random() > b) {
+            const r = map(b, 0, 0.88, 2.5, 0.4);
+            ellipse(x + random(-0.8, 0.8), y + random(-0.8, 0.8), r, r);
+          }
+        }
+      }
+    }
+
+    // 7: Contour lines
+    function drawContourLines(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const levels = 14;
+      const step = 2.5;
+      for (let level = 0; level < levels; level++) {
+        const threshold = level / levels;
+        for (let y = 0; y < h - step; y += step) {
+          for (let x = 0; x < w - step; x += step) {
+            const b00 = getB(x, y);
+            const b10 = getB(x + step, y);
+            const b01 = getB(x, y + step);
+            const b11 = getB(x + step, y + step);
+            const pts = [];
+            if ((b00 < threshold) !== (b10 < threshold)) {
+              const t = (threshold - b00) / (b10 - b00);
+              pts.push([x + t * step, y]);
+            }
+            if ((b10 < threshold) !== (b11 < threshold)) {
+              const t = (threshold - b10) / (b11 - b10);
+              pts.push([x + step, y + t * step]);
+            }
+            if ((b01 < threshold) !== (b11 < threshold)) {
+              const t = (threshold - b01) / (b11 - b01);
+              pts.push([x + t * step, y + step]);
+            }
+            if ((b00 < threshold) !== (b01 < threshold)) {
+              const t = (threshold - b00) / (b01 - b00);
+              pts.push([x, y + t * step]);
+            }
+            if (pts.length >= 2) {
+              strokeWeight(map(threshold, 0, 1, 1.2, 0.25));
+              line(pts[0][0], pts[0][1], pts[1][0], pts[1][1]);
+            }
+          }
+        }
+      }
+    }
+
+    // 8: Scribble
+    function drawScribble(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      for (let y = 0; y < h; y += 3.5) {
+        let inDark = false;
+        let startX = 0;
+        for (let x = 0; x < w; x += 1.5) {
+          const b = getB(x, y);
+          if (b < 0.85 && !inDark) { inDark = true; startX = x; }
+          else if ((b >= 0.85 || x >= w - 2) && inDark) {
+            inDark = false;
+            const midB = getB((startX + x) / 2, y);
+            const loops = Math.floor(map(midB, 0, 0.85, 4, 1));
+            strokeWeight(map(midB, 0, 0.85, 1.0, 0.3));
+            beginShape();
+            for (let i = 0; i < loops; i++) {
+              for (let sx = startX; sx < x; sx += 1.5) {
+                vertex(sx, y + sin(sx * 0.4 + i * 1.8) * map(midB, 0, 0.85, 3, 0.5));
+              }
+              for (let sx = x; sx > startX; sx -= 1.5) {
+                vertex(sx, y + cos(sx * 0.3 + i * 2.5) * map(midB, 0, 0.85, 3, 0.5));
+              }
+            }
+            endShape();
+          }
+        }
+      }
+    }
+
+    // 9: Radial burst
+    function drawRadialLines(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const cx = w / 2, cy = h * 0.33;
+      const numRays = 600;
+      for (let i = 0; i < numRays; i++) {
+        const angle = (i / numRays) * TWO_PI;
+        let drawing = false;
+        const maxR = max(w, h);
+        for (let r = 0; r < maxR; r += 1.5) {
+          const x = cx + cos(angle) * r;
+          const y = cy + sin(angle) * r;
+          if (x < 0 || x > w || y < 0 || y > h) { if (drawing) { endShape(); drawing = false; } continue; }
+          const b = getB(x, y);
+          if (b < 0.88) {
+            strokeWeight(map(b, 0, 0.88, 1.3, 0.15));
+            const wobble = sin(r * 0.12) * map(b, 0, 0.88, 1.5, 0);
+            if (!drawing) { beginShape(); drawing = true; }
+            vertex(x + cos(angle + HALF_PI) * wobble, y + sin(angle + HALF_PI) * wobble);
+          } else if (drawing) { endShape(); drawing = false; }
+        }
+        if (drawing) endShape();
+      }
+    }
+
+    // 10: Broken dashes
+    function drawBrokenHorizontal(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const step = 3;
+      for (let y = 0; y < h; y += step) {
+        let x = 0;
+        while (x < w) {
+          const b = getB(x, y);
+          if (b < 0.88) {
+            strokeWeight(map(b, 0, 0.88, 1.8, 0.3));
+            const len = map(b, 0, 0.88, 8, 1.5);
+            line(x, y + random(-0.3, 0.3), x + len, y + random(-0.3, 0.3));
+            x += len + random(0.5, 2);
+          } else {
+            x += 2;
+          }
+        }
+      }
+    }
+
+    // 11: Flow field
+    function drawFlowField(w, h) {
+      stroke(25, 20, 15);
+      noFill();
+      const step = 5;
+      for (let startY = 0; startY < h; startY += step) {
+        for (let startX = 0; startX < w; startX += step) {
+          const b = getB(startX, startY);
+          if (b > 0.85) continue;
+          strokeWeight(map(b, 0, 0.85, 1.2, 0.2));
+          let x = startX, y = startY;
+          beginShape();
+          const lineLen = Math.floor(map(b, 0, 0.85, 20, 3));
+          for (let i = 0; i < lineLen; i++) {
+            vertex(x, y);
+            const bL = getB(x - 1.5, y), bR = getB(x + 1.5, y);
+            const bU = getB(x, y - 1.5), bD = getB(x, y + 1.5);
+            let angle = atan2(bD - bU, bR - bL) + HALF_PI;
+            angle += sin(x * 0.04 + y * 0.04) * 0.4;
+            x += cos(angle) * 1.5;
+            y += sin(angle) * 1.5;
+            if (x < 0 || x > w || y < 0 || y > h) break;
+          }
+          endShape();
+        }
+      }
+    }
+  </script>
+</SketchLayout>
