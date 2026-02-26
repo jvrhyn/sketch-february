@@ -1,0 +1,194 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="dragon curve distort"
+  day={26}
+  description="dragon curve fractal. arrow keys to grow and shrink. click anywhere to distort — the curve ripples and settles back."
+>
+  <script is:inline>
+    const CANVAS_W = 600;
+    const CANVAS_H = 600;
+    const MAX_ITER = 16;
+    const SEG_LEN = 6;
+    const GROW_SPEED = 0.06;
+    const DISTORT_RADIUS = 150;
+    const DISTORT_STRENGTH = 40;
+    const FRICTION = 0.92;
+
+    let folds = [];
+    let segProgress = []; // per-segment growth 0→1
+    let iteration = 0;
+    let velX = [];
+    let velY = [];
+    let offsets = [];
+    let shrinking = false;
+    let shrinkCutoff = 0;
+
+    function setup() {
+      const canvas = createCanvas(CANVAS_W, CANVAS_H);
+      canvas.parent('sketch-container');
+      iteration = 1;
+      folds = [{ angle: HALF_PI }];
+      segProgress = [1, 1];
+      rebuildOffsets();
+    }
+
+    function rebuildOffsets() {
+      const numVerts = folds.length + 2;
+      while (offsets.length < numVerts) {
+        offsets.push({ x: 0, y: 0 });
+        velX.push(0);
+        velY.push(0);
+      }
+      offsets.length = numVerts;
+      velX.length = numVerts;
+      velY.length = numVerts;
+    }
+
+    function growDragon() {
+      if (iteration >= MAX_ITER || shrinking) return;
+      const newFolds = [];
+      for (const f of folds) {
+        newFolds.push({ angle: f.angle });
+      }
+      // Middle fold and second half get their final angles immediately
+      newFolds.push({ angle: HALF_PI });
+      for (let i = folds.length - 1; i >= 0; i--) {
+        newFolds.push({ angle: -folds[i].angle });
+      }
+      folds = newFolds;
+      iteration++;
+      // New segments start at length 0 and grow
+      const totalSegs = folds.length + 1;
+      while (segProgress.length < totalSegs) {
+        segProgress.push(0);
+      }
+      rebuildOffsets();
+    }
+
+    function shrinkDragon() {
+      if (iteration <= 1 || shrinking) return;
+      shrinking = true;
+      shrinkCutoff = Math.pow(2, iteration - 1);
+      // Shrink the second half segments toward 0
+    }
+
+    function finishShrink() {
+      const keepFolds = Math.pow(2, iteration - 1) - 1;
+      folds = folds.slice(0, keepFolds);
+      segProgress = segProgress.slice(0, keepFolds + 1);
+      iteration--;
+      shrinking = false;
+      rebuildOffsets();
+    }
+
+    function keyPressed() {
+      if (keyCode === RIGHT_ARROW) {
+        growDragon();
+        return false;
+      } else if (keyCode === LEFT_ARROW) {
+        shrinkDragon();
+        return false;
+      }
+    }
+
+    function mousePressed() {
+      if (mouseX < 0 || mouseX > CANVAS_W || mouseY < 0 || mouseY > CANVAS_H) return;
+      const verts = getScreenVerts();
+      for (let i = 0; i < verts.length; i++) {
+        const dx = verts[i][0] - mouseX;
+        const dy = verts[i][1] - mouseY;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < DISTORT_RADIUS && d > 0.1) {
+          const force = (1 - d / DISTORT_RADIUS) * DISTORT_STRENGTH;
+          velX[i] += (dx / d) * force;
+          velY[i] += (dy / d) * force;
+        }
+      }
+    }
+
+    function getScreenVerts() {
+      const pts = [[0, 0]];
+      let angle = 0;
+      for (let i = 0; i < folds.length + 1; i++) {
+        const prev = pts[pts.length - 1];
+        const len = SEG_LEN * (segProgress[i] || 0);
+        pts.push([
+          prev[0] + Math.cos(angle) * len,
+          prev[1] + Math.sin(angle) * len
+        ]);
+        if (i < folds.length) {
+          angle += folds[i].angle;
+        }
+      }
+      // Center on canvas
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const v of pts) {
+        if (v[0] < minX) minX = v[0];
+        if (v[0] > maxX) maxX = v[0];
+        if (v[1] < minY) minY = v[1];
+        if (v[1] > maxY) maxY = v[1];
+      }
+      const ox = CANVAS_W / 2 - (minX + maxX) / 2;
+      const oy = CANVAS_H / 2 - (minY + maxY) / 2;
+      return pts.map((v, i) => [
+        v[0] + ox + (offsets[i] ? offsets[i].x : 0),
+        v[1] + oy + (offsets[i] ? offsets[i].y : 0)
+      ]);
+    }
+
+    function draw() {
+      background(245, 242, 235);
+
+      // Animate segment growth toward 1 (or toward 0 if shrinking)
+      if (shrinking) {
+        let settled = true;
+        for (let i = shrinkCutoff; i < segProgress.length; i++) {
+          segProgress[i] = lerp(segProgress[i], 0, 0.18);
+          if (segProgress[i] > 0.005) settled = false;
+        }
+        // Keep first half at full
+        for (let i = 0; i < shrinkCutoff; i++) {
+          segProgress[i] = lerp(segProgress[i], 1, GROW_SPEED);
+        }
+        if (settled) finishShrink();
+      } else {
+        for (let i = 0; i < segProgress.length; i++) {
+          segProgress[i] = lerp(segProgress[i], 1, GROW_SPEED);
+        }
+      }
+
+      // Update distort offsets
+      for (let i = 0; i < offsets.length; i++) {
+        velX[i] *= FRICTION;
+        velY[i] *= FRICTION;
+        offsets[i].x += velX[i];
+        offsets[i].y += velY[i];
+        offsets[i].x *= 0.95;
+        offsets[i].y *= 0.95;
+      }
+
+      const verts = getScreenVerts();
+
+      // Draw the curve
+      stroke(30, 25, 20);
+      strokeWeight(iteration <= 6 ? 2 : iteration <= 10 ? 1.2 : 0.7);
+      noFill();
+      beginShape();
+      for (const v of verts) {
+        vertex(v[0], v[1]);
+      }
+      endShape();
+
+      // Iteration label
+      noStroke();
+      fill(30, 25, 20, 120);
+      textSize(13);
+      textAlign(LEFT, BOTTOM);
+      const displayIter = shrinking ? iteration - 1 : iteration;
+      text('iteration ' + displayIter + '  [← → grow/shrink]  [click to distort]', 16, CANVAS_H - 12);
+    }
+  </script>
+</SketchLayout>
