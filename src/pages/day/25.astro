@@ -1,0 +1,276 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="voronoi whirls"
+  day={25}
+  description="voronoi tessellation with whirl patterns. two sliders control whirl steps (left) and tightness (right). click to regenerate."
+>
+  <script is:inline>
+    const CANVAS_W = 600;
+    const CANVAS_H = 600;
+    const NUM_POINTS = 80;
+    const WHIRL_STEPS_MIN = 2;
+    const WHIRL_STEPS_MAX = 30;
+    const WHIRL_T_MIN = 0.01;
+    const WHIRL_T_MAX = 0.18;
+
+    const SLIDER_PAD = 40;
+    const SLIDER_TOP = SLIDER_PAD;
+    const SLIDER_BOT = CANVAS_H - SLIDER_PAD;
+    const SLIDER_H = SLIDER_BOT - SLIDER_TOP;
+
+    const SLIDER_L_X = 25;
+    const SLIDER_R_X = CANVAS_W - 25;
+
+    let cells = [];
+    let cellDirs = [];
+    let sliderL = 0.5; // whirl steps
+    let sliderR = 0.5; // whirl t
+    let dragging = null; // 'L', 'R', or null
+
+    function setup() {
+      const canvas = createCanvas(CANVAS_W, CANVAS_H);
+      canvas.parent('sketch-container');
+      generate();
+    }
+
+    function mousePressed() {
+      // Check left slider
+      const handleLY = SLIDER_TOP + sliderL * SLIDER_H;
+      if (Math.abs(mouseX - SLIDER_L_X) < 16 && Math.abs(mouseY - handleLY) < 18) {
+        dragging = 'L';
+        return;
+      }
+      // Check right slider
+      const handleRY = SLIDER_TOP + sliderR * SLIDER_H;
+      if (Math.abs(mouseX - SLIDER_R_X) < 16 && Math.abs(mouseY - handleRY) < 18) {
+        dragging = 'R';
+        return;
+      }
+      // Otherwise regenerate
+      if (mouseX >= 0 && mouseX <= CANVAS_W && mouseY >= 0 && mouseY <= CANVAS_H) {
+        generate();
+      }
+    }
+
+    function mouseDragged() {
+      if (dragging === 'L') {
+        sliderL = constrain((mouseY - SLIDER_TOP) / SLIDER_H, 0, 1);
+      } else if (dragging === 'R') {
+        sliderR = constrain((mouseY - SLIDER_TOP) / SLIDER_H, 0, 1);
+      }
+    }
+
+    function mouseReleased() {
+      dragging = null;
+    }
+
+    function generate() {
+      const pts = [];
+      const margin = 150;
+      for (let i = 0; i < NUM_POINTS; i++) {
+        pts.push([random(-margin, CANVAS_W + margin), random(-margin, CANVAS_H + margin)]);
+      }
+      cells = computeVoronoi(pts);
+      cellDirs = cells.map(() => random() < 0.5 ? 1 : -1);
+    }
+
+    function delaunay(points) {
+      const margin = 2000;
+      const st = [
+        [-margin, -margin],
+        [CANVAS_W + margin * 2, -margin],
+        [CANVAS_W / 2, CANVAS_H + margin * 2]
+      ];
+
+      let tris = [{ a: st[0], b: st[1], c: st[2] }];
+
+      for (const p of points) {
+        const bad = [];
+        const good = [];
+
+        for (const tri of tris) {
+          if (inCircumcircle(p, tri)) {
+            bad.push(tri);
+          } else {
+            good.push(tri);
+          }
+        }
+
+        const polygon = [];
+        for (const tri of bad) {
+          const edges = [[tri.a, tri.b], [tri.b, tri.c], [tri.c, tri.a]];
+          for (const [ea, eb] of edges) {
+            let shared = false;
+            for (const other of bad) {
+              if (other === tri) continue;
+              if (hasEdge(other, ea, eb)) { shared = true; break; }
+            }
+            if (!shared) polygon.push([ea, eb]);
+          }
+        }
+
+        tris = good;
+        for (const [ea, eb] of polygon) {
+          tris.push({ a: ea, b: eb, c: p });
+        }
+      }
+
+      return { tris, superTri: st };
+    }
+
+    function circumcenter(tri) {
+      const ax = tri.a[0], ay = tri.a[1];
+      const bx = tri.b[0], by = tri.b[1];
+      const cx = tri.c[0], cy = tri.c[1];
+      const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+      if (Math.abs(d) < 1e-10) return null;
+      const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+      const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+      return [ux, uy];
+    }
+
+    function computeVoronoi(points) {
+      const { tris, superTri } = delaunay(points);
+      const result = [];
+
+      for (const pt of points) {
+        const myTris = tris.filter(tri =>
+          tri.a === pt || tri.b === pt || tri.c === pt
+        );
+
+        let boundary = false;
+        for (const tri of myTris) {
+          for (const v of [tri.a, tri.b, tri.c]) {
+            if (v === superTri[0] || v === superTri[1] || v === superTri[2]) {
+              boundary = true;
+              break;
+            }
+          }
+          if (boundary) break;
+        }
+        if (boundary) continue;
+
+        const centers = myTris.map(tri => circumcenter(tri)).filter(c => c !== null);
+        if (centers.length < 3) continue;
+
+        const cx = pt[0], cy = pt[1];
+        centers.sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+
+        result.push(centers);
+      }
+
+      return result;
+    }
+
+    function inCircumcircle(p, tri) {
+      const ax = tri.a[0], ay = tri.a[1];
+      const bx = tri.b[0], by = tri.b[1];
+      const cx = tri.c[0], cy = tri.c[1];
+      const px = p[0], py = p[1];
+      const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+      if (Math.abs(d) < 1e-10) return false;
+      const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+      const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+      const r2 = (ax - ux) * (ax - ux) + (ay - uy) * (ay - uy);
+      const dist2 = (px - ux) * (px - ux) + (py - uy) * (py - uy);
+      return dist2 < r2;
+    }
+
+    function hasEdge(tri, ea, eb) {
+      const verts = [tri.a, tri.b, tri.c];
+      let hasA = false, hasB = false;
+      for (const v of verts) {
+        if (v === ea) hasA = true;
+        if (v === eb) hasB = true;
+      }
+      return hasA && hasB;
+    }
+
+    function drawPolyWhirl(verts, dir, t, steps) {
+      const n = verts.length;
+      if (dir < 0) verts = verts.slice().reverse();
+
+      const fadeZone = 60;
+
+      for (let step = 0; step < steps; step++) {
+        for (let i = 0; i < n; i++) {
+          const a = verts[i];
+          const b = verts[(i + 1) % n];
+          const midX = (a[0] + b[0]) / 2;
+          // Fade near either slider
+          const dL = Math.abs(midX - SLIDER_L_X);
+          const dR = Math.abs(midX - SLIDER_R_X);
+          const dMin = Math.min(dL, dR);
+          const alpha = map(dMin, 0, fadeZone, 40, 255, true);
+          stroke(30, 25, 20, alpha);
+          line(a[0], a[1], b[0], b[1]);
+        }
+
+        const next = [];
+        for (let i = 0; i < n; i++) {
+          const curr = verts[i];
+          const nxt = verts[(i + 1) % n];
+          next.push([
+            curr[0] + (nxt[0] - curr[0]) * t,
+            curr[1] + (nxt[1] - curr[1]) * t
+          ]);
+        }
+        verts = next;
+      }
+    }
+
+    function drawSlider(x, val, active, ticks) {
+      const handleY = SLIDER_TOP + val * SLIDER_H;
+
+      // Tick marks
+      if (ticks > 0) {
+        stroke(30, 25, 20, 50);
+        strokeWeight(1);
+        for (let i = 0; i <= ticks; i++) {
+          const y = SLIDER_TOP + (i / ticks) * SLIDER_H;
+          line(x - 8, y, x + 8, y);
+        }
+      }
+
+      // Track
+      stroke(30, 25, 20, 80);
+      strokeWeight(3);
+      line(x, SLIDER_TOP, x, SLIDER_BOT);
+
+      // End caps
+      noStroke();
+      fill(30, 25, 20, 80);
+      ellipse(x, SLIDER_TOP, 6, 6);
+      ellipse(x, SLIDER_BOT, 6, 6);
+
+      // Handle
+      fill(30, 25, 20, active ? 240 : 180);
+      ellipse(x, handleY, 20, 20);
+      fill(245, 242, 235);
+      ellipse(x, handleY, 8, 8);
+    }
+
+    function draw() {
+      // Unruly sliders: drift toward center when not dragged
+      if (dragging !== 'L') sliderL = lerp(sliderL, 0.5, 0.008);
+      if (dragging !== 'R') sliderR = lerp(sliderR, 0.5, 0.008);
+
+      const currentSteps = Math.round(map(sliderL, 0, 1, WHIRL_STEPS_MIN, WHIRL_STEPS_MAX));
+      const currentT = map(sliderR, 0, 1, WHIRL_T_MIN, WHIRL_T_MAX);
+
+      background(245, 242, 235);
+      noFill();
+      strokeWeight(0.8);
+
+      for (let i = 0; i < cells.length; i++) {
+        drawPolyWhirl(cells[i], cellDirs[i], currentT, currentSteps);
+      }
+
+      drawSlider(SLIDER_L_X, sliderL, dragging === 'L', WHIRL_STEPS_MAX - WHIRL_STEPS_MIN);
+      drawSlider(SLIDER_R_X, sliderR, dragging === 'R', 0);
+    }
+  </script>
+</SketchLayout>
