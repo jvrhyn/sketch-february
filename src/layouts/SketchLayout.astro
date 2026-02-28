@@ -115,8 +115,8 @@ const nextDay = day < 28 ? day + 1 : null;
         <div class="day-label">Day {day}</div>
       </div>
       <nav>
-        {prevDay && <a href={`${import.meta.env.BASE_URL}day/${prevDay}/`}>&larr; Day {prevDay}</a>}
-        {nextDay && <a href={`${import.meta.env.BASE_URL}day/${nextDay}/`}>Day {nextDay} &rarr;</a>}
+        {prevDay && <a href={`${import.meta.env.BASE_URL}/day/${prevDay}/`}>&larr; Day {prevDay}</a>}
+        {nextDay && <a href={`${import.meta.env.BASE_URL}/day/${nextDay}/`}>Day {nextDay} &rarr;</a>}
       </nav>
     </header>
     <main>
