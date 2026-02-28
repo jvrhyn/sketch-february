@@ -145,7 +145,7 @@ const allDays = Array.from({ length: 28 }, (_, i) => i + 1);
       {allDays.map((day) => {
         const sketch = sketches.find(s => s.day === day);
         return sketch ? (
-          <a href={`/day/${day}`} class="day-card available">
+          <a href={`${import.meta.env.BASE_URL}day/${day}`} class="day-card available">
             <span class="day-number">{day}</span>
             <span class="day-title">{sketch.title}</span>
           </a>
