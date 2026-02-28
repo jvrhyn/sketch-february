@@ -1,0 +1,178 @@
+---
+import SketchLayout from '../../layouts/SketchLayout.astro';
+---
+
+<SketchLayout
+  title="truchet tiles"
+  day={27}
+  description="move mouse to invert nearby tiles. click to regenerate. slider controls mutation speed."
+>
+  <style>
+    .controls {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      align-items: center;
+      margin-top: 0.5rem;
+    }
+    .slider-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .slider-group label {
+      font-size: 0.7rem;
+      opacity: 0.4;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .slider-group input[type="range"] {
+      width: 160px;
+      accent-color: #888;
+    }
+  </style>
+  <script is:inline>
+    const W = 600;
+    const H = 600;
+    const S = 30;
+    const COLS = W / S;
+    const ROWS = H / S;
+    const FLIP_R = 100;
+    const WEIGHT = S * 0.05;
+    const FILL_COL = [0, 0, 0];
+
+    // Mutation settings
+    const MIN_INTERVAL = 2;
+    const MAX_INTERVAL = 120;
+    const MIN_COUNT = 1;
+    const MAX_COUNT = 30;
+
+    let grid = [];
+    let startT = 0;
+    let sliderVal = 0.3;
+    let lastMutateFrame = 0;
+
+    // Inject slider below canvas
+    document.addEventListener('DOMContentLoaded', () => {
+      const container = document.getElementById('sketch-container');
+      const controls = document.createElement('div');
+      controls.className = 'controls';
+      controls.innerHTML = `
+        <div class="slider-group">
+          <label>entropy</label>
+          <input type="range" id="mutation-slider" min="0" max="100" value="30">
+        </div>
+      `;
+      container.parentNode.insertBefore(controls, container.nextSibling);
+
+      document.getElementById('mutation-slider').addEventListener('input', (e) => {
+        sliderVal = e.target.value / 100;
+      });
+    });
+
+    function setup() {
+      const canvas = createCanvas(W, H);
+      canvas.parent('sketch-container');
+      generate();
+    }
+
+    function generate() {
+      grid = [];
+      for (let r = 0; r < ROWS; r++) {
+        grid[r] = [];
+        for (let c = 0; c < COLS; c++) {
+          grid[r][c] = floor(random(2));
+        }
+      }
+      startT = millis();
+    }
+
+    function getOrientation(r, c) {
+      const cx = c * S + S / 2;
+      const cy = r * S + S / 2;
+      const d = dist(mouseX, mouseY, cx, cy);
+      const near = d < FLIP_R;
+      return near ? 1 - grid[r][c] : grid[r][c];
+    }
+
+    function mutate() {
+      const interval = Math.round(lerp(MAX_INTERVAL, MIN_INTERVAL, sliderVal));
+      if (frameCount - lastMutateFrame < interval) return;
+      lastMutateFrame = frameCount;
+
+      const count = Math.round(lerp(MIN_COUNT, MAX_COUNT, sliderVal));
+      for (let i = 0; i < count; i++) {
+        const r = floor(random(ROWS));
+        const c = floor(random(COLS));
+        grid[r][c] = 1 - grid[r][c];
+      }
+    }
+
+    function draw() {
+      background(255);
+      const elapsed = millis() - startT;
+
+      if (sliderVal > 0.01) mutate();
+
+      // Pass 1: two-color the regions formed by arcs
+      noStroke();
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const x = c * S;
+          const y = r * S;
+          const delay = (r + c) * 50;
+          if (elapsed < delay) continue;
+          const o = getOrientation(r, c);
+
+          const pieParity = o === 0 ? (r + c) % 2 : (r + c + 1) % 2;
+          const pieR = pieParity === 0 ? FILL_COL[0] : 255;
+          const pieG = pieParity === 0 ? FILL_COL[1] : 255;
+          const pieB = pieParity === 0 ? FILL_COL[2] : 255;
+          const chanR = pieParity === 0 ? 255 : FILL_COL[0];
+          const chanG = pieParity === 0 ? 255 : FILL_COL[1];
+          const chanB = pieParity === 0 ? 255 : FILL_COL[2];
+
+          fill(chanR, chanG, chanB);
+          rect(x, y, S, S);
+
+          fill(pieR, pieG, pieB);
+          if (o === 0) {
+            arc(x, y, S, S, 0, HALF_PI, PIE);
+            arc(x + S, y + S, S, S, PI, PI + HALF_PI, PIE);
+          } else {
+            arc(x + S, y, S, S, HALF_PI, PI, PIE);
+            arc(x, y + S, S, S, PI + HALF_PI, TWO_PI, PIE);
+          }
+        }
+      }
+
+      // Pass 2: thick black arcs
+      noFill();
+      stroke(0);
+      strokeWeight(WEIGHT);
+      strokeCap(ROUND);
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const x = c * S;
+          const y = r * S;
+          const delay = (r + c) * 50;
+          if (elapsed < delay) continue;
+          const o = getOrientation(r, c);
+          if (o === 0) {
+            arc(x, y, S, S, 0, HALF_PI);
+            arc(x + S, y + S, S, S, PI, PI + HALF_PI);
+          } else {
+            arc(x + S, y, S, S, HALF_PI, PI);
+            arc(x, y + S, S, S, PI + HALF_PI, TWO_PI);
+          }
+        }
+      }
+    }
+
+    function mousePressed() {
+      if (mouseX >= 0 && mouseX <= W && mouseY >= 0 && mouseY <= H) {
+        generate();
+      }
+    }
+  </script>
+</SketchLayout>
