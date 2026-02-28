@@ -88,7 +88,7 @@ import SketchLayout from '../../layouts/SketchLayout.astro';
     ];
 
     function preload() {
-      img = loadImage('/guanyin.jpg');
+      img = loadImage((window.__BASE__ || '') + '/guanyin.jpg');
     }
 
     function setup() {

@@ -19,7 +19,7 @@ import SketchLayout from '../../layouts/SketchLayout.astro';
     let lastRippleTime = 0;
 
     function preload() {
-      moonImg = loadImage('/moon.png');
+      moonImg = loadImage((window.__BASE__ || '') + '/moon.png');
     }
 
     function setup() {

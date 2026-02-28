@@ -13,6 +13,9 @@ const nextDay = day < 28 ? day + 1 : null;
 <!doctype html>
 <html lang="en">
   <head>
+    <script is:inline define:vars={{ base: import.meta.env.BASE_URL }}>
+      window.__BASE__ = base;
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Day {day}: {title} | sketch february</title>
